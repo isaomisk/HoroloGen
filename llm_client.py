@@ -110,11 +110,17 @@ editor_note は「販売現場での実体験・所感・技術的ポイント�
 - 想像・補完・事実に見える推測は禁止
 
 ────────────────────
-【reference_url の使い方】
+【reference_url の使い方（重要：intro_textで必須）】
 ────────────────────
-- 背景説明・文脈補足の材料としてのみ使用する
-- 数値・仕様は canonical_specs のみを使用する
-- 本文が薄い場合は、実用性・装着感を中心に構成する
+- reference_url本文（複数URL結合）は intro_text の「背景段落」を作るために必ず使う
+- 背景段落は intro_text に最低1段落必須（本文がある場合）
+  - 「位置づけ・文脈」を説明する段落にする（例：シリーズ内の役割、語られている評価軸、設計意図、なぜ注目されるか 等）
+  - 参考本文から読み取れる具体点を最低2点入れる（ただし数値・仕様は書かない）
+  - 新旧比較は、本文に明確な根拠がある場合のみ触れる（無い場合は触れない）
+- 数値・仕様（径/厚み/防水/キャリバー/素材/価格 等）は canonical_specs のみを使用する
+- 本文が薄い/無い場合のみ、背景段落は省略し、実用性・装着感中心に寄せる
+- 英語本文でも、出力は日本語で自然に要約して良い（直訳不要）
+
 
 ────────────────────
 【specs_text のルール】
@@ -219,6 +225,9 @@ TRUST_SOURCES: Dict[str, Dict[str, Any]] = {
     "fratellowatches.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "watchesbysjx.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "revolutionwatch.com": {"category": "C", "allowed_use": ["context", "opinion"]},
+    "rescapement.com": {"category": "C", "allowed_use": ["context", "opinion"]},
+    "watchadvice.com": {"category": "C", "allowed_use": ["context", "opinion"]},
+    "teddybaldassarre.com": {"category": "C", "allowed_use": ["context", "opinion"]},
 
     # D: マーケット系（用途限定）
     "chrono24.com": {"category": "D", "allowed_use": ["market", "context"]},
@@ -517,4 +526,228 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
             policy_line = (
                 f"- source_domain: {host or '(invalid)'}\n"
                 f"- source_category: (untrusted)\n"
-                
+                f"- allowed_use: none\n"
+            )
+
+    if reference_text.strip():
+        ref_block = f"""
+[参考資料（スタッフが指定したURL群の本文抜粋）]
+採用表示用URL（代表）: {reference_url if reference_url else "(未指定)"}
+{policy_line}
+本文抜粋（複数URLの結合）:
+{reference_text}
+"""
+    else:
+        ref_block = f"""
+[参考資料]
+採用表示用URL（代表）: {reference_url if reference_url else "(未指定)"}
+{policy_line}
+本文: (なし)
+"""
+
+    return f"""以下の商品について、intro_text と specs_text を作成してください。
+
+[商品]
+- brand: {brand}
+- reference: {ref}
+
+[トーン]
+{tone}
+
+[オプション]
+- include_brand_profile: {include_brand_profile}
+- include_wearing_scenes: {include_wearing_scenes}
+
+[editor_note（スタッフの主観・経験・逸話。intro_textに必ず反映）]
+{editor_note if editor_note else "(未入力)"}
+
+[canonical_specs（確定事実）]
+{json.dumps(facts_norm, ensure_ascii=False, indent=2)}
+
+[specs_text の出力テンプレ（この形式で必ず出力）]
+{specs_template}
+
+{ref_block}
+
+[重要ルール]
+- intro_text には editor_note の内容を必ず含める（未入力の場合は触れない）
+- 語り手は「正規時計店スタッフ」。一人称の使い方はトーン規定に従う
+- 事実の優先順位：canonical_specs > remarks > reference_url本文
+- 矛盾がある場合は必ず上位を採用する
+- specs_text は必ず出力する（空にしない）
+- specs_text は上のテンプレをそのまま使う（順序・形式を変えない）
+- （reference_url本文がある場合）intro_text は次の構成を必ず満たす：
+  1) 背景段落（必須・1段落）：reference_url本文から「位置づけ/文脈」を要約し、具体点を2つ以上入れる（数値・仕様は禁止）
+  2) 実用段落（1段落以上）：装着感/使い勝手/取り回しを、canonical_specs と editor_note の範囲でまとめる
+  3) 店頭目線のまとめ（必須・最後の1段落）：「どういう方/用途に合うか」をスタッフとして整理して締める（煽り禁止）
+- 新旧比較は reference_url本文に明確な根拠がある場合のみ触れる（無理に作らない）
+{target_note}
+"""
+
+# ----------------------------
+# Hype ban
+# ----------------------------
+BANNED_PHRASES = [
+    "買うのは今です", "買うのは今", "今買わないと損", "絶対買い", "買わない理由がない", "マストバイ",
+    "値上げ前に急げ", "入手困難で後悔", "このチャンスを逃すな",
+    "必ず値上がり", "資産になる",
+]
+
+def validate_no_hype(text: str) -> list:
+    t = text or ""
+    return [p for p in BANNED_PHRASES if p in t]
+
+def _pick_tool_input(message) -> Dict[str, Any]:
+    tool_uses = [b for b in message.content if getattr(b, "type", None) == "tool_use"]
+    if not tool_uses:
+        return {}
+    return tool_uses[0].input or {}
+
+def _is_valid_article_dict(d: Dict[str, Any]) -> bool:
+    if not isinstance(d, dict):
+        return False
+    intro = (d.get("intro_text") or "").strip()
+    specs = (d.get("specs_text") or "").strip()
+    return bool(intro and specs)
+
+# ----------------------------
+# Main entry: generate_article
+# ----------------------------
+def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
+    reference_urls = payload.get("reference_urls") or []
+    if not isinstance(reference_urls, list):
+        reference_urls = []
+
+    legacy = (payload.get("reference_url") or payload.get("research", {}).get("reference_url") or "").strip()
+    if legacy:
+        reference_urls = [legacy] + [u for u in reference_urls if u != legacy]
+
+    reference_urls = [u.strip() for u in reference_urls if isinstance(u, str) and u.strip()][:3]
+
+    per_url_debug: List[Dict[str, Any]] = []
+    per_url_texts: List[Dict[str, str]] = []
+
+    best_url = ""
+    best_text = ""
+    chosen_url = ""
+    chosen_text = ""
+    chosen_reason = ""
+
+    if not reference_urls:
+        per_url_debug.append({
+            "url": "(no urls)",
+            "allowed": False,
+            "fetch_ok": False,
+            "status": None,
+            "method": "",
+            "chars": 0,
+            "ok": False,
+            "preview": "",
+            "filtered_reason": "no_reference_urls_in_payload",
+        })
+
+    for u in reference_urls:
+        text, ok, meta = fetch_page_text(u)
+        per_url_texts.append({"url": u, "text": text or ""})
+
+        per_url_debug.append({
+            "url": u,
+            "allowed": meta.get("allowed"),
+            "fetch_ok": meta.get("fetch_ok"),
+            "status": meta.get("status"),
+            "method": meta.get("method"),
+            "chars": meta.get("extracted_chars", 0),
+            "ok": bool(ok),
+            "preview": meta.get("extracted_preview", ""),
+            "filtered_reason": meta.get("filtered_reason", ""),
+        })
+
+        if len(text or "") > len(best_text or ""):
+            best_text = text or ""
+            best_url = u
+
+        if ok and not chosen_url:
+            chosen_url = u
+            chosen_text = text or ""
+            chosen_reason = "本文が十分だったので採用"
+
+    if not chosen_url:
+        chosen_url = best_url
+        chosen_text = best_text
+        if chosen_url:
+            chosen_reason = "一番長い本文だったので採用"
+        else:
+            chosen_reason = "参考URLなし（本文なし）"
+
+    # 結合は「3本を必ず混ぜる」：各URL最大2200、合計最大8000
+    combined_blocks = []
+    total = 0
+    PER_URL_MAX = 2200
+    TOTAL_MAX = 8000
+
+    for item in per_url_texts:
+        t = (item.get("text") or "").strip()
+        if not t:
+            continue
+        t = t[:PER_URL_MAX]
+        block = f"URL: {item['url']}\n本文抜粋:\n{t}"
+        if total + len(block) > TOTAL_MAX:
+            continue  # breakしない。後続URLが短い場合に入る余地を残す
+        combined_blocks.append(block)
+        total += len(block)
+
+
+    combined_reference_text = "\n\n---\n\n".join(combined_blocks).strip()
+
+    payload["reference_url"] = chosen_url
+
+    ref_meta = {
+        "selected_reference_url": chosen_url,
+        "selected_reference_reason": chosen_reason,
+        "selected_reference_chars": len(chosen_text or ""),
+        "combined_reference_chars": len(combined_reference_text or ""),
+        "combined_reference_preview": _safe_preview(combined_reference_text, 360),
+        "reference_urls_debug": per_url_debug,  # ★必ず入る
+    }
+
+    tone = (payload.get("style", {}) or {}).get("tone", "practical")
+    # “短いが0ではない” でも URLあり扱いに寄せる
+    has_ref = len(combined_reference_text or "") >= 200
+    system = build_system(tone, has_reference_text=has_ref)
+    user_prompt = build_user_prompt(payload, combined_reference_text)
+
+    def _call_claude():
+        return client.messages.create(
+            model=MODEL,
+            max_tokens=1700,
+            temperature=0.3,
+            system=system,
+            messages=[{"role": "user", "content": user_prompt}],
+            tools=[ARTICLE_TOOL],
+            tool_choice={"type": "tool", "name": "return_article"},
+        )
+
+    # tool出力が空/欠損するケースへの耐性（最大2回）
+    data: Dict[str, Any] = {}
+    for _ in range(2):
+        msg = _call_claude()
+        data = _pick_tool_input(msg) or {}
+        if _is_valid_article_dict(data):
+            break
+
+    intro = (data.get("intro_text") or "").strip()
+    specs = (data.get("specs_text") or "").strip()
+
+    if intro and not specs:
+        facts = payload.get("facts", {}) or {}
+        facts_norm = _normalize_facts(facts)
+        specs = _specs_text_from_canonical(facts_norm).strip()
+
+    if not intro or not specs:
+        raise ValueError(f"Claudeのtool出力が不正です。keys={list((data or {}).keys())} input={data}")
+
+    hits = validate_no_hype(intro)
+    if hits:
+        raise ValueError(f"煽り表現が検出されました: {hits}")
+
+    return intro, specs, ref_meta

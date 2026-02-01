@@ -4,9 +4,14 @@ import csv
 import io
 import os
 import sqlite3
+from datetime import datetime, timedelta
 
 from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS
 import llm_client as llmc
+from url_discovery import discover_reference_urls
+generate_article = llmc.generate_article
+get_source_policy = llmc.get_source_policy
+
 
 app = Flask(__name__)
 init_db()
@@ -235,15 +240,25 @@ def _build_history_rows(rows):
         except Exception:
             payload = {}
 
+        created_raw = r["created_at"]  # 例: "2026-02-01 07:11:44" (UTC)
+        created_jst = created_raw
+        try:
+            dt = datetime.strptime(created_raw, "%Y-%m-%d %H:%M:%S")
+            dt_jst = dt + timedelta(hours=9)
+            created_jst = dt_jst.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+
         out.append({
             "id": r["id"],
-            "created_at": r["created_at"],
+            "created_at": created_jst,  # ★表示はJST
             "intro_text": r["intro_text"] or "",
             "specs_text": r["specs_text"] or "",
             "selected_reference_url": payload.get("selected_reference_url", "") or payload.get("reference_url", "") or "",
             "selected_reference_reason": payload.get("selected_reference_reason", "") or "",
         })
     return out
+
 
 
 @app.route('/staff/search', methods=['GET', 'POST'])
@@ -255,11 +270,12 @@ def staff_search():
         'case_thickness_mm', 'lug_width_mm', 'remarks',
     ]
 
-    # ★テンプレ側で is defined が必ず成立するようにデフォルトを用意
     debug_defaults = {
         "combined_reference_chars": 0,
         "combined_reference_preview": "",
         "reference_urls_debug": [],
+        "llm_client_file": llmc.__file__,
+        "raw_urls_debug": [],
     }
 
     if request.method == 'POST':
@@ -354,17 +370,17 @@ def staff_search():
                 request.form.get('reference_url_2', '').strip(),
                 request.form.get('reference_url_3', '').strip(),
             ]
+            raw_urls = [u for u in raw_urls if u]
 
-            reference_urls = []
-            for u in raw_urls:
-                if not u:
-                    continue
-                allowed, host, _policy = llmc.get_source_policy(u)
-                if not allowed:
-                    flash(f'このURLは信頼ソース未登録のため取得しません: {host}', 'warning')
-                    continue
-                reference_urls.append(u)
-            reference_urls = reference_urls[:3]
+            auto_url_debug = {}
+
+            # URLが未入力なら自動抽出（キーが無ければ空で返る＝手入力運用のまま）
+            if not raw_urls:
+                auto_urls, auto_url_debug = discover_reference_urls(brand, reference, max_urls=3)
+                reference_urls = auto_urls[:3]
+            else:
+                # ★ここでは弾かない（弾くと“何が起きたか”が消える）
+                reference_urls = raw_urls[:3]
 
             conn = get_db_connection()
             master = conn.execute('''
@@ -416,19 +432,24 @@ def staff_search():
 
             try:
                 intro_text, specs_text, ref_meta = llmc.generate_article(payload)
-
-
-                payload["selected_reference_url"] = ref_meta.get("selected_reference_url", "")
-                payload["selected_reference_reason"] = ref_meta.get("selected_reference_reason", "")
-                payload["selected_reference_chars"] = ref_meta.get("selected_reference_chars", 0)
-
-                payload["combined_reference_chars"] = ref_meta.get("combined_reference_chars", 0)
-                payload["combined_reference_preview"] = ref_meta.get("combined_reference_preview", "")
-                payload["reference_urls_debug"] = ref_meta.get("reference_urls_debug", [])
-
             except Exception as e:
                 flash(f'記事生成中にエラーが発生しました: {e}', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
+
+            # ★テンプレ表示用は payload ではなく “ref_meta 直結” で渡す（ズレを許さない）
+            combined_reference_chars = ref_meta.get("combined_reference_chars", 0)
+            combined_reference_preview = ref_meta.get("combined_reference_preview", "")
+            reference_urls_debug = ref_meta.get("reference_urls_debug", [])
+
+            selected_reference_url = ref_meta.get("selected_reference_url", "")
+            selected_reference_reason = ref_meta.get("selected_reference_reason", "")
+
+            # 履歴保存用に payload_json にも入れる
+            payload["selected_reference_url"] = selected_reference_url
+            payload["selected_reference_reason"] = selected_reference_reason
+            payload["combined_reference_chars"] = combined_reference_chars
+            payload["combined_reference_preview"] = combined_reference_preview
+            payload["reference_urls_debug"] = reference_urls_debug
 
             try:
                 conn_save = get_db_connection()
@@ -468,18 +489,6 @@ def staff_search():
                 if ov:
                     overridden_fields.add(f)
 
-            warnings = []
-            override_warning = None
-            import_conflict_warning = None
-
-            if not master:
-                warnings.append('商品マスタに存在しません。任意入力してください')
-            if not canonical.get('price_jpy'):
-                warnings.append('price_jpyがマスタとオーバーライドの両方で空です')
-
-            if override:
-                override_warning = 'この商品にはオーバーライドが設定されています'
-
             history_rows = conn.execute("""
                 SELECT id, intro_text, specs_text, payload_json, created_at
                 FROM generated_articles
@@ -499,28 +508,28 @@ def staff_search():
                 override=override,
                 canonical=canonical,
                 overridden_fields=overridden_fields,
-                warnings=warnings,
-                override_warning=override_warning,
-                import_conflict_warning=import_conflict_warning,
                 generated_intro_text=intro_text,
                 generated_specs_text=specs_text,
                 generation_tone=tone,
                 generation_include_brand_profile=include_brand_profile,
                 generation_include_wearing_scenes=include_wearing_scenes,
                 generation_reference_urls=reference_urls,
-                selected_reference_url=payload.get("selected_reference_url", ""),
-                selected_reference_reason=payload.get("selected_reference_reason", ""),
+                selected_reference_url=selected_reference_url,
+                selected_reference_reason=selected_reference_reason,
                 history=history,
+                combined_reference_chars=combined_reference_chars,
+                combined_reference_preview=combined_reference_preview,
+                reference_urls_debug=reference_urls_debug,
                 llm_client_file=llmc.__file__,
-                llm_client_has_debug_keys=("combined_reference_chars" in (payload or {})),
-                raw_urls_debug=raw_urls,
-                # ★デバッグ値を必ずテンプレへ渡す
-                combined_reference_chars=payload.get("combined_reference_chars", 0),
-                combined_reference_preview=payload.get("combined_reference_preview", ""),
-                reference_urls_debug=payload.get("reference_urls_debug", []),
+                raw_urls_debug=(raw_urls if raw_urls else reference_urls),
             )
 
         if action == 'regenerate_from_history':
+            flash('履歴から再生成は現在停止中です（今は不要なため）', 'warning')
+            brand = request.form.get('brand', '').strip()
+            reference = request.form.get('reference', '').strip()
+            return redirect(url_for('staff_search', brand=brand, reference=reference))
+
             history_id = request.form.get('history_id')
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
@@ -547,20 +556,23 @@ def staff_search():
                 payload = {}
 
             try:
-                intro_text, specs_text, ref_meta = generate_article(payload)
-
-                payload["selected_reference_url"] = ref_meta.get("selected_reference_url", "")
-                payload["selected_reference_reason"] = ref_meta.get("selected_reference_reason", "")
-                payload["selected_reference_chars"] = ref_meta.get("selected_reference_chars", 0)
-
-                payload["combined_reference_chars"] = ref_meta.get("combined_reference_chars", 0)
-                payload["combined_reference_preview"] = ref_meta.get("combined_reference_preview", "")
-                payload["reference_urls_debug"] = ref_meta.get("reference_urls_debug", [])
-
+                intro_text, specs_text, ref_meta = llmc.generate_article(payload)
             except Exception as e:
                 conn.close()
                 flash(f'再生成中にエラーが発生しました: {e}', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
+
+            combined_reference_chars = ref_meta.get("combined_reference_chars", 0)
+            combined_reference_preview = ref_meta.get("combined_reference_preview", "")
+            reference_urls_debug = ref_meta.get("reference_urls_debug", [])
+            selected_reference_url = ref_meta.get("selected_reference_url", "")
+            selected_reference_reason = ref_meta.get("selected_reference_reason", "")
+
+            payload["selected_reference_url"] = selected_reference_url
+            payload["selected_reference_reason"] = selected_reference_reason
+            payload["combined_reference_chars"] = combined_reference_chars
+            payload["combined_reference_preview"] = combined_reference_preview
+            payload["reference_urls_debug"] = reference_urls_debug
 
             conn.execute(
                 """
@@ -622,13 +634,14 @@ def staff_search():
                 generation_tone=(payload.get('style', {}) or {}).get('tone'),
                 generation_include_brand_profile=(payload.get('options', {}) or {}).get('include_brand_profile'),
                 generation_include_wearing_scenes=(payload.get('options', {}) or {}).get('include_wearing_scenes'),
-                selected_reference_url=payload.get("selected_reference_url", ""),
-                selected_reference_reason=payload.get("selected_reference_reason", ""),
+                selected_reference_url=selected_reference_url,
+                selected_reference_reason=selected_reference_reason,
                 history=history,
-                # ★デバッグ値を必ずテンプレへ渡す
-                combined_reference_chars=payload.get("combined_reference_chars", 0),
-                combined_reference_preview=payload.get("combined_reference_preview", ""),
-                reference_urls_debug=payload.get("reference_urls_debug", []),
+                combined_reference_chars=combined_reference_chars,
+                combined_reference_preview=combined_reference_preview,
+                reference_urls_debug=reference_urls_debug,
+                llm_client_file=llmc.__file__,
+                raw_urls_debug=(payload.get("reference_urls") or []),
             )
 
         flash('不明な操作です', 'error')
@@ -699,7 +712,6 @@ def staff_search():
         override_warning=override_warning,
         import_conflict_warning=import_conflict_warning,
         history=history,
-        # ★GETでも定義しておく（テンプレ側が安定する）
         **debug_defaults
     )
 
