@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+
+{% block title %}Staff: 検索・オーバーライド - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>Staff: 検索・オーバーライド</h1>
+
+<form method="POST" style="margin-bottom: 30px;">
+  <input type="hidden" name="action" value="search">
+  <div class="form-group">
+    <label for="brand">ブランド</label>
+    <select id="brand" name="brand" required>
+      <option value="">選択してください</option>
+      {% for b in brands %}
+      <option value="{{ b }}" {% if brand == b %}selected{% endif %}>{{ b }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label for="reference">リファレンス</label>
+    <input type="text" id="reference" name="reference" value="{{ reference or '' }}" required>
+  </div>
+
+  <button type="submit">検索</button>
+</form>
+
+{% if warnings %}
+  {% for warning in warnings %}
+  <div class="alert alert-warning">{{ warning }}</div>
+  {% endfor %}
+{% endif %}
+
+{% if override_warning %}
+  <div class="alert alert-warning">
+    <strong>警告:</strong> {{ override_warning }}
+    {% if import_conflict_warning %}
+    <br><strong>追加警告:</strong> {{ import_conflict_warning }}
+    {% endif %}
+  </div>
+{% endif %}
+
+{% if override %}
+<div style="margin-bottom: 20px;">
+  <form method="POST" style="display: inline;">
+    <input type="hidden" name="action" value="delete_override">
+    <input type="hidden" name="brand" value="{{ brand }}">
+    <input type="hidden" name="reference" value="{{ reference }}">
+    <button type="submit" class="btn btn-danger" onclick="return confirm('オーバーライドを解除してマスタに戻しますか？')">
+      オーバーライド解除（マスタに戻す）
+    </button>
+  </form>
+</div>
+{% endif %}
+
+{% if canonical %}
+  <h2>正規仕様（Canonical Specs）</h2>
+  <div class="specs-grid">
+    {% for field, value in canonical.items() %}
+    <div class="spec-card {% if field in overridden_fields %}override-field{% endif %}">
+      <div class="spec-label">
+        {{ field }}
+        {% if field in overridden_fields %}
+        <span class="override-badge">オーバーライド</span>
+        {% endif %}
+      </div>
+      <div class="spec-value">{{ value or '(空)' }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <h2>記事生成（ダミー）</h2>
+  <form method="POST" style="margin-bottom: 30px;">
+    <input type="hidden" name="action" value="generate_dummy">
+    <input type="hidden" name="brand" value="{{ brand }}">
+    <input type="hidden" name="reference" value="{{ reference }}">
+
+    <div class="form-group">
+      <label for="tone">トーン</label>
+      <select id="tone" name="tone" required>
+        <option value="luxury" {% if generation_tone == 'luxury' %}selected{% endif %}>フォーマル・権威型（luxury）</option>
+        <option value="casual_friendly" {% if generation_tone == 'casual_friendly' or not generation_tone %}selected{% endif %}>カジュアル・親しみ型（casual_friendly）</option>
+        <option value="magazine_story" {% if generation_tone == 'magazine_story' %}selected{% endif %}>ストーリー型（magazine_story）</option>
+        <option value="practical" {% if generation_tone == 'practical' %}selected{% endif %}>実用・標準（practical）</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>
+        <input type="checkbox" name="include_brand_profile" {% if generation_include_brand_profile %}checked{% endif %}>
+        ブランドプロフィールを含める
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label>
+        <input type="checkbox" name="include_wearing_scenes" {% if generation_include_wearing_scenes %}checked{% endif %}>
+        装着シーンを含める
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label>参考URL（任意・最大3本）</label>
+
+      <input
+        type="url"
+        name="reference_url_1"
+        value="{{ generation_reference_urls[0] if generation_reference_urls and generation_reference_urls|length > 0 else '' }}"
+        placeholder="参考URL 1（推奨）: https://www.omegawatches.jp/..."
+        style="width: 100%; margin-bottom: 8px;"
+      >
+
+      <input
+        type="url"
+        name="reference_url_2"
+        value="{{ generation_reference_urls[1] if generation_reference_urls and generation_reference_urls|length > 1 else '' }}"
+        placeholder="参考URL 2（任意）: https://..."
+        style="width: 100%; margin-bottom: 8px;"
+      >
+
+      <input
+        type="url"
+        name="reference_url_3"
+        value="{{ generation_reference_urls[2] if generation_reference_urls and generation_reference_urls|length > 2 else '' }}"
+        placeholder="参考URL 3（任意）: https://..."
+        style="width: 100%;"
+      >
+
+      <small style="color:#666;">
+        公式 / 正規代理店 / 許可メディアなど、信頼できるページを最大3本まで貼れます（ホワイトリスト外は無視されます）
+      </small>
+    </div>
+
+    <button type="submit">記事生成（ダミー）</button>
+  </form>
+
+  {% if generated_intro_text or generated_specs_text %}
+    <h3>生成結果</h3>
+
+    {% if selected_reference_url %}
+      <div class="alert alert-info" style="margin-bottom: 12px;">
+        <div><strong>参考URL採用:</strong> {{ selected_reference_url }}</div>
+        {% if selected_reference_reason %}
+        <div><strong>理由:</strong> {{ selected_reference_reason }}</div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <!-- ★デバッグ欄（必ず出る） -->
+    <details style="margin: 10px 0 14px 0;">
+      <summary>デバッグ：URL本文が取得できているか（開く）</summary>
+        <div><strong>llm_client_file:</strong> {{ llm_client_file }}</div>
+        <div><strong>raw_urls_debug:</strong> {{ raw_urls_debug }}</div>
+
+
+      <div style="margin-top:8px; font-size: 12px; color:#444;">
+        <div><strong>combined_reference_chars:</strong> {{ combined_reference_chars }}</div>
+        {% if combined_reference_chars|int == 0 %}
+          <div style="margin-top:6px; color:#b00;">
+            URL本文が0文字です。今はURL本文が生成に使えません（＝スペック寄りになります）。
+          </div>
+        {% endif %}
+        {% if combined_reference_preview %}
+          <div style="margin-top:6px;"><strong>preview:</strong> {{ combined_reference_preview }}</div>
+        {% endif %}
+      </div>
+
+      {% if reference_urls_debug %}
+        <div style="margin-top:10px;">
+          <div style="font-weight:bold; font-size:12px;">per_url</div>
+          {% for d in reference_urls_debug %}
+            <div style="padding:8px; border:1px solid #eee; margin-top:6px; font-size:12px;">
+              <div><strong>url:</strong> {{ d.url }}</div>
+              <div>allowed={{ d.allowed }} fetch_ok={{ d.fetch_ok }} status={{ d.status }} ok={{ d.ok }}</div>
+              <div>method={{ d.method }} chars={{ d.chars }} filtered_reason={{ d.filtered_reason }}</div>
+              {% if d.preview %}
+                <div style="margin-top:6px;">preview: {{ d.preview }}</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div style="margin-top:10px; font-size:12px; color:#666;">
+          reference_urls_debug が空です（URL未入力 or 取得前に弾かれた可能性）。
+        </div>
+      {% endif %}
+    </details>
+
+    <div class="form-group">
+      <label for="generated_intro">【商品紹介文】 ({{ generated_intro_text|length }}文字)</label>
+      <textarea id="generated_intro" readonly rows="10" style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">{{ generated_intro_text }}</textarea>
+      <button type="button" onclick="copyToClipboard('generated_intro')" style="margin-top: 5px;">コピー</button>
+    </div>
+
+    <div class="form-group">
+      <label for="generated_specs">【商品スペック】 ({{ generated_specs_text|length }}文字)</label>
+      <textarea id="generated_specs" readonly rows="10" style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">{{ generated_specs_text }}</textarea>
+      <button type="button" onclick="copyToClipboard('generated_specs')" style="margin-top: 5px;">コピー</button>
+    </div>
+  {% endif %}
+
+  {% if history %}
+    <hr>
+    <h3>生成履歴（直近{{ history|length }}件）</h3>
+
+    {% for h in history %}
+      <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd;">
+        <div style="color:#666; font-size: 12px;">
+          #{{ h.id }} / {{ h.created_at }}
+        </div>
+
+        {% if h.selected_reference_url %}
+          <div style="margin-top:6px; font-size: 12px; color:#444;">
+            <div><strong>参考URL採用:</strong> {{ h.selected_reference_url }}</div>
+            {% if h.selected_reference_reason %}
+            <div><strong>理由:</strong> {{ h.selected_reference_reason }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
+
+        <details style="margin-top:8px;">
+          <summary>商品紹介文</summary>
+          <textarea id="hist_intro_{{ h.id }}" readonly rows="8" style="width:100%; font-family: monospace; white-space: pre-wrap;">{{ h.intro_text }}</textarea>
+          <button type="button" onclick="copyToClipboard('hist_intro_{{ h.id }}')" style="margin-top: 6px;">紹介文をコピー</button>
+        </details>
+
+        <details style="margin-top:8px;">
+          <summary>商品スペック</summary>
+          <textarea id="hist_specs_{{ h.id }}" readonly rows="8" style="width:100%; font-family: monospace; white-space: pre-wrap;">{{ h.specs_text }}</textarea>
+          <button type="button" onclick="copyToClipboard('hist_specs_{{ h.id }}')" style="margin-top: 6px;">スペックをコピー</button>
+        </details>
+
+        <form method="POST" style="margin-top: 10px;">
+          <input type="hidden" name="action" value="regenerate_from_history">
+          <input type="hidden" name="history_id" value="{{ h.id }}">
+          <input type="hidden" name="brand" value="{{ brand }}">
+          <input type="hidden" name="reference" value="{{ reference }}">
+          <button type="submit">この履歴で再生成</button>
+        </form>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  <h2>オーバーライド編集</h2>
+  <form method="POST">
+    <input type="hidden" name="action" value="save_override">
+    <input type="hidden" name="brand" value="{{ brand }}">
+    <input type="hidden" name="reference" value="{{ reference }}">
+
+    <div class="specs-grid">
+      <div class="form-group">
+        <label for="price_jpy">価格 (JPY)</label>
+        <input type="text" id="price_jpy" name="price_jpy" value="{{ override.price_jpy if override else '' }}" placeholder="{{ master.price_jpy if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="case_size_mm">ケースサイズ (mm)</label>
+        <input type="text" id="case_size_mm" name="case_size_mm" value="{{ override.case_size_mm if override else '' }}" placeholder="{{ master.case_size_mm if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="movement">ムーブメント</label>
+        <select id="movement" name="movement">
+          <option value="">選択してください</option>
+          <option value="automatic" {% if override and override.movement == 'automatic' %}selected{% endif %}>automatic</option>
+          <option value="manual" {% if override and override.movement == 'manual' %}selected{% endif %}>manual</option>
+          <option value="quartz" {% if override and override.movement == 'quartz' %}selected{% endif %}>quartz</option>
+          <option value="Spring Drive automatic" {% if override and override.movement == 'Spring Drive automatic' %}selected{% endif %}>Spring Drive automatic</option>
+          <option value="Manual winding" {% if override and override.movement == 'Manual winding' %}selected{% endif %}>Manual winding</option>
+        </select>
+        {% if master and master.movement %}
+        <small style="color: #666;">マスタ値: {{ master.movement }}</small>
+        {% endif %}
+      </div>
+
+      <div class="form-group">
+        <label for="case_material">ケース材質</label>
+        <input type="text" id="case_material" name="case_material" value="{{ override.case_material if override else '' }}" placeholder="{{ master.case_material if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="bracelet_strap">ブレスレット/ストラップ</label>
+        <select id="bracelet_strap" name="bracelet_strap">
+          <option value="">選択してください</option>
+          <option value="bracelet" {% if override and override.bracelet_strap == 'bracelet' %}selected{% endif %}>bracelet</option>
+          <option value="strap" {% if override and override.bracelet_strap == 'strap' %}selected{% endif %}>strap</option>
+        </select>
+        {% if master and master.bracelet_strap %}
+        <small style="color: #666;">マスタ値: {{ master.bracelet_strap }}</small>
+        {% endif %}
+      </div>
+
+      <div class="form-group">
+        <label for="dial_color">ダイアルカラー</label>
+        <input type="text" id="dial_color" name="dial_color" value="{{ override.dial_color if override else '' }}" placeholder="{{ master.dial_color if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="water_resistance_m">耐水性能 (m)</label>
+        <input type="text" id="water_resistance_m" name="water_resistance_m" value="{{ override.water_resistance_m if override else '' }}" placeholder="{{ master.water_resistance_m if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="buckle">バックル</label>
+        <select id="buckle" name="buckle">
+          <option value="">選択してください</option>
+          <option value="pin" {% if override and override.buckle == 'pin' %}selected{% endif %}>pin</option>
+          <option value="D" {% if override and override.buckle == 'D' %}selected{% endif %}>D</option>
+        </select>
+        {% if master and master.buckle %}
+        <small style="color: #666;">マスタ値: {{ master.buckle }}</small>
+        {% endif %}
+      </div>
+
+      <div class="form-group">
+        <label for="warranty_years">保証期間 (年)</label>
+        <input type="text" id="warranty_years" name="warranty_years" value="{{ override.warranty_years if override else '' }}" placeholder="{{ master.warranty_years if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="collection">コレクション</label>
+        <in

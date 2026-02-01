@@ -1,0 +1,130 @@
+import sqlite3
+import os
+from datetime import datetime
+
+DB_PATH = '/Users/misaki/Desktop/HoroloGen/horologen.db'
+
+# 必須CSVカラム
+REQUIRED_CSV_COLUMNS = [
+    'brand', 'reference', 'price_jpy', 'case_size_mm', 'movement',
+    'case_material', 'bracelet_strap', 'dial_color', 'water_resistance_m',
+    'buckle', 'warranty_years', 'collection', 'movement_caliber',
+    'case_thickness_mm', 'lug_width_mm', 'remarks'
+]
+
+def init_db():
+    """データベースを初期化"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # master_products テーブル
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS master_products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            brand TEXT NOT NULL,
+            reference TEXT NOT NULL,
+            price_jpy TEXT,
+            case_size_mm TEXT,
+            movement TEXT,
+            case_material TEXT,
+            bracelet_strap TEXT,
+            dial_color TEXT,
+            water_resistance_m TEXT,
+            buckle TEXT,
+            warranty_years TEXT,
+            collection TEXT,
+            movement_caliber TEXT,
+            case_thickness_mm TEXT,
+            lug_width_mm TEXT,
+            remarks TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(brand, reference)
+        )
+    ''')
+
+    # product_overrides テーブル
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS product_overrides (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            brand TEXT NOT NULL,
+            reference TEXT NOT NULL,
+            price_jpy TEXT,
+            case_size_mm TEXT,
+            movement TEXT,
+            case_material TEXT,
+            bracelet_strap TEXT,
+            dial_color TEXT,
+            water_resistance_m TEXT,
+            buckle TEXT,
+            warranty_years TEXT,
+            collection TEXT,
+            movement_caliber TEXT,
+            case_thickness_mm TEXT,
+            lug_width_mm TEXT,
+            remarks TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(brand, reference)
+        )
+    ''')
+
+    # master_uploads テーブル（アップロード履歴）
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS master_uploads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            total_rows INTEGER,
+            inserted_count INTEGER,
+            updated_count INTEGER,
+            error_count INTEGER,
+            error_details TEXT,
+            changed_count INTEGER DEFAULT 0,
+            override_conflict_count INTEGER DEFAULT 0,
+            sample_diffs TEXT,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # 既存のテーブルに新しいカラムを追加（存在しない場合のみ）
+    try:
+        cursor.execute('ALTER TABLE master_uploads ADD COLUMN changed_count INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass  # カラムが既に存在する場合はスキップ
+
+    try:
+        cursor.execute('ALTER TABLE master_uploads ADD COLUMN override_conflict_count INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass  # カラムが既に存在する場合はスキップ
+
+    try:
+        cursor.execute('ALTER TABLE master_uploads ADD COLUMN sample_diffs TEXT')
+    except sqlite3.OperationalError:
+        pass  # カラムが既に存在する場合はスキップ
+
+    # generated_articles テーブル（記事生成履歴）
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS generated_articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            brand TEXT NOT NULL,
+            reference TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            intro_text TEXT,
+            specs_text TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_generated_articles_brand_ref_created
+        ON generated_articles (brand, reference, created_at DESC)
+    """)
+
+    conn.commit()
+    conn.close()
+
+def get_db_connection():
+    """データベース接続を取得"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
