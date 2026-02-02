@@ -227,6 +227,7 @@ TRUST_SOURCES: Dict[str, Dict[str, Any]] = {
     "revolutionwatch.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "rescapement.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "watchadvice.com": {"category": "C", "allowed_use": ["context", "opinion"]},
+    "swisswatches-magazine.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "teddybaldassarre.com": {"category": "C", "allowed_use": ["context", "opinion"]},
 
     # D: マーケット系（用途限定）
@@ -576,6 +577,7 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 - 矛盾がある場合は必ず上位を採用する
 - specs_text は必ず出力する（空にしない）
 - specs_text は上のテンプレをそのまま使う（順序・形式を変えない）
+- reference_url本文は「同コレクション/同モデル系列の記事」の可能性がある。背景・歴史・位置づけの説明に使ってよいが、対象リファレンス固有（文字盤色・仕様差など）の断定は canonical_specs / remarks にある場合のみ行う
 - （reference_url本文がある場合）intro_text は次の構成を必ず満たす：
   1) 背景段落（必須・1段落）：reference_url本文から「位置づけ/文脈」を要約し、具体点を2つ以上入れる（数値・仕様は禁止）
   2) 実用段落（1段落以上）：装着感/使い勝手/取り回しを、canonical_specs と editor_note の範囲でまとめる
@@ -633,10 +635,21 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
     chosen_text = ""
     chosen_reason = ""
 
+    # 対象リファレンス（本文に含まれていれば優先採用する）
+    product_ref = ((payload.get("product") or {}).get("reference") or "").strip()
+
+    def _norm_ref(s: str) -> str:
+        # "IW371605" / "310.30.42.50.01.002" などを比較しやすく
+        return "".join(ch for ch in (s or "").upper() if ch.isalnum())
+
+    ref_norm = _norm_ref(product_ref)
+
+    # ★URLが0件でも debug に残す（ゼロ許容しない）
     if not reference_urls:
         per_url_debug.append({
             "url": "(no urls)",
             "allowed": False,
+            "host": "",
             "fetch_ok": False,
             "status": None,
             "method": "",
@@ -644,15 +657,20 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
             "ok": False,
             "preview": "",
             "filtered_reason": "no_reference_urls_in_payload",
+            "ref_hit": False,
         })
 
     for u in reference_urls:
         text, ok, meta = fetch_page_text(u)
         per_url_texts.append({"url": u, "text": text or ""})
 
+        text_norm = _norm_ref(text)
+        ref_hit = bool(ref_norm) and (ref_norm in text_norm)
+
         per_url_debug.append({
             "url": u,
             "allowed": meta.get("allowed"),
+            "host": meta.get("host"),
             "fetch_ok": meta.get("fetch_ok"),
             "status": meta.get("status"),
             "method": meta.get("method"),
@@ -660,26 +678,34 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
             "ok": bool(ok),
             "preview": meta.get("extracted_preview", ""),
             "filtered_reason": meta.get("filtered_reason", ""),
+            "ref_hit": ref_hit,
         })
 
-        if len(text or "") > len(best_text or ""):
-            best_text = text or ""
+        if len(text) > len(best_text):
+            best_text = text
             best_url = u
 
-        if ok and not chosen_url:
-            chosen_url = u
-            chosen_text = text or ""
-            chosen_reason = "本文が十分だったので採用"
+    # 採用URLの選定ルール：
+    # 1) ok かつ ref_hit があるURLがあれば最優先
+    # 2) 次に ok のURL（最初の1本）
+    # 3) 最後に最長本文
+    hit_ok = next((x for x in per_url_debug if x.get("ok") and x.get("ref_hit")), None)
+    ok_any = next((x for x in per_url_debug if x.get("ok")), None)
 
-    if not chosen_url:
+    if hit_ok:
+        chosen_url = hit_ok["url"]
+        chosen_text = next((t["text"] for t in per_url_texts if t["url"] == chosen_url), "") or ""
+        chosen_reason = "本文中に対象リファレンスが含まれていたため採用"
+    elif ok_any:
+        chosen_url = ok_any["url"]
+        chosen_text = next((t["text"] for t in per_url_texts if t["url"] == chosen_url), "") or ""
+        chosen_reason = "本文が十分だったので採用（同系統/同コレクションの背景として利用）"
+    else:
         chosen_url = best_url
         chosen_text = best_text
-        if chosen_url:
-            chosen_reason = "一番長い本文だったので採用"
-        else:
-            chosen_reason = "参考URLなし（本文なし）"
+        chosen_reason = "一番長い本文だったので採用（同系統/同コレクションの背景として利用）" if chosen_url else "参考URLなし（本文なし）"
 
-    # 結合は「3本を必ず混ぜる」：各URL最大2200、合計最大8000
+    # ★結合は「3本を必ず混ぜる」：各URL最大2200 / 合計最大8000
     combined_blocks = []
     total = 0
     PER_URL_MAX = 2200
@@ -692,10 +718,9 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
         t = t[:PER_URL_MAX]
         block = f"URL: {item['url']}\n本文抜粋:\n{t}"
         if total + len(block) > TOTAL_MAX:
-            continue  # breakしない。後続URLが短い場合に入る余地を残す
+            continue
         combined_blocks.append(block)
         total += len(block)
-
 
     combined_reference_text = "\n\n---\n\n".join(combined_blocks).strip()
 
@@ -707,7 +732,7 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
         "selected_reference_chars": len(chosen_text or ""),
         "combined_reference_chars": len(combined_reference_text or ""),
         "combined_reference_preview": _safe_preview(combined_reference_text, 360),
-        "reference_urls_debug": per_url_debug,  # ★必ず入る
+        "reference_urls_debug": per_url_debug,
     }
 
     tone = (payload.get("style", {}) or {}).get("tone", "practical")
