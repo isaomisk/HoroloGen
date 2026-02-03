@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}Admin: CSVアップロード - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>Admin: CSVアップロード・インポート</h1>
+
+<form method="POST" enctype="multipart/form-data">
+    <div class="form-group">
+        <label for="csv_file">CSVファイルを選択（UTF-8形式）</label>
+        <input type="file" id="csv_file" name="csv_file" accept=".csv" required>
+    </div>
+    
+    <button type="submit">アップロード・インポート</button>
+</form>
+
+<div style="margin-top: 30px;">
+    <h2>CSVファイル形式</h2>
+    <p>以下のカラムを含む必要があります（順序は任意）：</p>
+    <ul style="margin-left: 20px; margin-top: 10px;">
+        <li>brand, reference（必須）</li>
+        <li>price_jpy, case_size_mm, movement, case_material</li>
+        <li>bracelet_strap, dial_color, water_resistance_m, buckle</li>
+        <li>warranty_years, collection, movement_caliber</li>
+        <li>case_thickness_mm, lug_width_mm, remarks</li>
+    </ul>
+    <p style="margin-top: 10px; color: #666;">
+        <strong>注意:</strong> brandとreferenceが空の行はスキップされます。不正なカラムが含まれている場合はインポートが停止されます。
+    </p>
+</div>
+
+{% if latest_upload %}
+<div style="margin-top: 30px;">
+    <h2>最新のインポート結果</h2>
+    <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px;">
+        <p><strong>ファイル名:</strong> {{ latest_upload.filename }}</p>
+        <p><strong>アップロード日時:</strong> {{ latest_upload.uploaded_at }}</p>
+        <p><strong>総行数:</strong> {{ latest_upload.total_rows }}</p>
+        <p><strong>新規:</strong> {{ latest_upload.inserted_count }}</p>
+        <p><strong>更新:</strong> {{ latest_upload.updated_count }}</p>
+        <p><strong>エラー:</strong> {{ latest_upload.error_count }}</p>
+        <p><strong>変更:</strong> {{ latest_upload.changed_count or 0 }}</p>
+        <p><strong>オーバーライド競合:</strong> {{ latest_upload.override_conflict_count or 0 }}</p>
+    </div>
+    
+    {% if sample_diffs %}
+    <div style="margin-top: 20px;">
+        <h3>サンプル差分（最大10件）</h3>
+        <div style="background-color: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+            {% for diff_item in sample_diffs %}
+            <div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
+                <p><strong>{{ diff_item.brand }} / {{ diff_item.reference }}</strong></p>
+                <ul style="margin-left: 20px;">
+                    {% for diff in diff_item.diffs %}
+                    <li>
+                        <strong>{{ diff.field }}:</strong> 
+                        "{{ diff.old }}" → "{{ diff.new }}"
+                        {% if diff.override_exists %}
+                        <span style="color: #d9534f; font-weight: bold;">（オーバーライド存在）</span>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}
