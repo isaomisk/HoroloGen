@@ -181,14 +181,23 @@ TONE_PROFILES = {
     },
 }
 
-def build_system(tone: str, has_reference_text: bool) -> str:
-    profile = TONE_PROFILES.get(tone) or TONE_PROFILES["practical"]
+def build_system(tone: str, has_reference_text: bool, rewrite_mode: bool = False) -> str:
+    profile = TONE_PROFILES.get(tone) or TONE_PROFILES.get("practical") or TONE_PROFILES["casual_friendly"]
     if has_reference_text:
         lo, hi = profile["chars_with_url"]
         depth_note = "reference_url本文があるため、背景・文脈を厚めに扱ってよい。"
     else:
         lo, hi = profile["chars_no_url"]
         depth_note = "reference_url本文が薄い/ないため、深掘りを抑制し、安全な範囲でまとめる。"
+
+    rewrite_note = ""
+    if rewrite_mode:
+        rewrite_note = (
+            "\n【言い換え強化モード】\n"
+            "- 参考資料の文章は引用せず、必ず言い換えて要約する\n"
+            "- 同じ言い回しの連続（日本語/英語いずれも）を避ける\n"
+            "- 固有名詞・型番・キャリバー名は保持してよい\n"
+        )
 
     return (
         SYSTEM_BASE
@@ -197,8 +206,9 @@ def build_system(tone: str, has_reference_text: bool) -> str:
         + f"\n【intro_text の文字数】\n- 目安：{lo}〜{hi}文字\n- {depth_note}\n"
         + "\n【intro_text の構成】\n"
           "- 段落ごとに1テーマ（読み物として自然に）\n"
-          "- 事実は canonical_specs / remarks / reference_url本文の範囲でのみ断定\n"
           "- 背景段落を1段落だけ必ず入れる（シリーズの位置づけ/文脈＋店頭目線の短いまとめ）\n"
+          "- 事実は canonical_specs / remarks / reference_url本文の範囲でのみ断定\n"
+        + rewrite_note
     )
 
 # ----------------------------
@@ -601,6 +611,58 @@ def validate_no_hype(text: str) -> list:
     t = text or ""
     return [p for p in BANNED_PHRASES if p in t]
 
+import re
+from typing import List  # 既にあれば不要
+
+def _normalize_for_similarity(text: str) -> str:
+    t = (text or "").lower()
+    # 余計な空白を潰す
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+def estimate_overlap_percent(intro_text: str, reference_text: str, n: int = 10) -> float:
+    """
+    intro_text と reference_text の「文字n-gram」重なり率(%) を簡易推定。
+    - overlap = intro側のn-gramのうち、referenceにも存在する割合
+    - 日本語/英語混在でも動く
+    """
+    a = _normalize_for_similarity(intro_text)
+    b = _normalize_for_similarity(reference_text)
+
+    a = a.replace(" ", "")
+    b = b.replace(" ", "")
+
+    if len(a) < n or len(b) < n:
+        return 0.0
+
+    a_grams = {a[i:i+n] for i in range(len(a) - n + 1)}
+    b_grams = {b[i:i+n] for i in range(len(b) - n + 1)}
+
+    if not a_grams:
+        return 0.0
+
+    overlap = len(a_grams & b_grams)
+    pct = (overlap / max(len(a_grams), 1)) * 100.0
+    return round(pct, 1)
+
+def similarity_level(pct: float) -> str:
+    """
+    青/黄/赤の3段階
+    - blue: 0〜9.9%
+    - yellow: 10.0〜17.9%
+    - red: 18.0%〜
+    """
+    try:
+        p = float(pct)
+    except Exception:
+        p = 0.0
+    if p >= 18.0:
+        return "red"
+    if p >= 10.0:
+        return "yellow"
+    return "blue"
+
+
 def _pick_tool_input(message) -> Dict[str, Any]:
     tool_uses = [b for b in message.content if getattr(b, "type", None) == "tool_use"]
     if not tool_uses:
@@ -740,7 +802,8 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
     tone = (payload.get("style", {}) or {}).get("tone", "practical")
     # “短いが0ではない” でも URLあり扱いに寄せる
     has_ref = len(combined_reference_text or "") >= 200
-    system = build_system(tone, has_reference_text=has_ref)
+    rewrite_mode = bool((payload.get("options", {}) or {}).get("rewrite_mode"))
+    system = build_system(tone, has_reference_text=has_ref, rewrite_mode=rewrite_mode)
     user_prompt = build_user_prompt(payload, combined_reference_text)
 
     def _call_claude():
@@ -764,6 +827,12 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
 
     intro = (data.get("intro_text") or "").strip()
     specs = (data.get("specs_text") or "").strip()
+
+    # 類似度（intro vs reference）
+    sim_pct = estimate_overlap_percent(intro, combined_reference_text)
+    sim_level = similarity_level(sim_pct)
+    ref_meta["similarity_percent"] = sim_pct
+    ref_meta["similarity_level"] = sim_level
 
     if intro and not specs:
         facts = payload.get("facts", {}) or {}

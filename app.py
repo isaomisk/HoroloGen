@@ -276,6 +276,8 @@ def staff_search():
         "reference_urls_debug": [],
         "llm_client_file": llmc.__file__,
         "raw_urls_debug": [],
+        "similarity_percent": 0,
+        "similarity_level": "blue",
     }
 
     if request.method == 'POST':
@@ -437,19 +439,28 @@ def staff_search():
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             # ★テンプレ表示用は payload ではなく “ref_meta 直結” で渡す（ズレを許さない）
-            combined_reference_chars = ref_meta.get("combined_reference_chars", 0)
-            combined_reference_preview = ref_meta.get("combined_reference_preview", "")
-            reference_urls_debug = ref_meta.get("reference_urls_debug", [])
+            combined_reference_chars = int(ref_meta.get("combined_reference_chars", 0) or 0)
+            combined_reference_preview = ref_meta.get("combined_reference_preview", "") or ""
+            reference_urls_debug = ref_meta.get("reference_urls_debug", []) or []
 
-            selected_reference_url = ref_meta.get("selected_reference_url", "")
-            selected_reference_reason = ref_meta.get("selected_reference_reason", "")
+            selected_reference_url = ref_meta.get("selected_reference_url", "") or ""
+            selected_reference_reason = ref_meta.get("selected_reference_reason", "") or ""
 
-            # 履歴保存用に payload_json にも入れる
+            # ★類似度（ref_metaになければ 0 / blue を必ず保存）
+            similarity_percent = int(ref_meta.get("similarity_percent", 0) or 0)
+            similarity_level = (ref_meta.get("similarity_level") or "blue").strip() or "blue"
+
+            # 履歴保存用に payload_json にも入れる（DB保存はこれで完了）
             payload["selected_reference_url"] = selected_reference_url
             payload["selected_reference_reason"] = selected_reference_reason
             payload["combined_reference_chars"] = combined_reference_chars
             payload["combined_reference_preview"] = combined_reference_preview
             payload["reference_urls_debug"] = reference_urls_debug
+            payload["similarity_percent"] = similarity_percent
+            payload["similarity_level"] = similarity_level
+
+            # ★ここで dumps する（dumpsを先にやらない）
+            payload_json_str = json.dumps(payload, ensure_ascii=False)
 
             try:
                 conn_save = get_db_connection()
@@ -460,7 +471,7 @@ def staff_search():
                 """, (
                     brand,
                     reference,
-                    json.dumps(payload, ensure_ascii=False),
+                    payload_json_str,
                     intro_text,
                     specs_text
                 ))
@@ -499,6 +510,7 @@ def staff_search():
             conn.close()
             history = _build_history_rows(history_rows)
 
+
             return render_template(
                 'search.html',
                 brands=BRANDS,
@@ -522,6 +534,8 @@ def staff_search():
                 reference_urls_debug=reference_urls_debug,
                 llm_client_file=llmc.__file__,
                 raw_urls_debug=(raw_urls if raw_urls else reference_urls),
+                similarity_percent=similarity_percent,
+                similarity_level=similarity_level,
             )
 
         if action == 'regenerate_from_history':
@@ -573,6 +587,8 @@ def staff_search():
             payload["combined_reference_chars"] = combined_reference_chars
             payload["combined_reference_preview"] = combined_reference_preview
             payload["reference_urls_debug"] = reference_urls_debug
+            payload["similarity_percent"] = similarity_percent
+            payload["similarity_level"] = similarity_level
 
             conn.execute(
                 """
