@@ -171,7 +171,7 @@
           {% for d in reference_urls_debug %}
             <div style="padding:8px; border:1px solid #eee; margin-top:6px; font-size:12px;">
               <div><strong>url:</strong> {{ d.url }}</div>
-              <div>allowed={{ d.allowed }} fetch_ok={{ d.fetch_ok }} status={{ d.status }} ok={{ d.ok }}</div>
+              <div>allowed={{ d.allowed }} fetch_ok={{ d.fetch_ok }} status={{ d.status }} ok={{ d.ok }} ref_hit={{ d.ref_hit }}</div>
               <div>method={{ d.method }} chars={{ d.chars }} filtered_reason={{ d.filtered_reason }}</div>
               {% if d.preview %}
                 <div style="margin-top:6px;">preview: {{ d.preview }}</div>
