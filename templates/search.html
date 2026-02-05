@@ -106,7 +106,7 @@
         type="url"
         name="reference_url_1"
         value="{{ generation_reference_urls[0] if generation_reference_urls and generation_reference_urls|length > 0 else '' }}"
-        placeholder="参考URL 1（推奨）: https://www.omegawatches.jp/..."
+        placeholder="参考URL 1（推奨）: https://..."
         style="width: 100%; margin-bottom: 8px;"
       >
 
@@ -127,7 +127,7 @@
       >
 
       <small style="color:#666;">
-        公式 / 正規代理店 / 許可メディアなど、信頼できるページを最大3本まで貼れます（ホワイトリスト外は無視されます）
+        公式 / 正規代理店 / 許可メディアなど、信頼できるページを最大3本まで貼れます（ホワイトリスト外は取得されません）
       </small>
     </div>
 
@@ -146,45 +146,32 @@
       </div>
     {% endif %}
 
-    <!-- ★デバッグ欄（必ず出る） -->
-    <details style="margin: 10px 0 14px 0;">
-      <summary>デバッグ：URL本文が取得できているか（開く）</summary>
-        <div><strong>llm_client_file:</strong> {{ llm_client_file }}</div>
-        <div><strong>raw_urls_debug:</strong> {{ raw_urls_debug }}</div>
-
-
-      <div style="margin-top:8px; font-size: 12px; color:#444;">
-        <div><strong>combined_reference_chars:</strong> {{ combined_reference_chars }}</div>
-        {% if combined_reference_chars|int == 0 %}
-          <div style="margin-top:6px; color:#b00;">
-            URL本文が0文字です。今はURL本文が生成に使えません（＝スペック寄りになります）。
-          </div>
-        {% endif %}
-        {% if combined_reference_preview %}
-          <div style="margin-top:6px;"><strong>preview:</strong> {{ combined_reference_preview }}</div>
-        {% endif %}
+    {% set sim_cls = similarity_level|default('blue') %}
+    <div class="alert" style="border:1px solid #ddd; background:#fafafa; margin-bottom:12px;">
+      <div>
+        <strong>類似度:</strong>
+        <span class="sim-badge {{ sim_cls }}">{{ similarity_percent|default(0) }}%</span>
+        <span style="color:#666; font-size:12px;">（blue / yellow / red）</span>
       </div>
 
-      {% if reference_urls_debug %}
-        <div style="margin-top:10px;">
-          <div style="font-weight:bold; font-size:12px;">per_url</div>
-          {% for d in reference_urls_debug %}
-            <div style="padding:8px; border:1px solid #eee; margin-top:6px; font-size:12px;">
-              <div><strong>url:</strong> {{ d.url }}</div>
-              <div>allowed={{ d.allowed }} fetch_ok={{ d.fetch_ok }} status={{ d.status }} ok={{ d.ok }} ref_hit={{ d.ref_hit }}</div>
-              <div>method={{ d.method }} chars={{ d.chars }} filtered_reason={{ d.filtered_reason }}</div>
-              {% if d.preview %}
-                <div style="margin-top:6px;">preview: {{ d.preview }}</div>
-              {% endif %}
-            </div>
-          {% endfor %}
-        </div>
+      {% if saved_article_id %}
+        <form method="POST" style="margin-top:10px;">
+          <input type="hidden" name="action" value="rewrite_once">
+          <input type="hidden" name="brand" value="{{ brand }}">
+          <input type="hidden" name="reference" value="{{ reference }}">
+          <input type="hidden" name="source_article_id" value="{{ saved_article_id }}">
+          <button type="submit">言い換え再生成（1回）</button>
+          <small style="color:#666; display:block; margin-top:6px;">
+            ※必要なときだけ押してください（最大1回）<br>
+            ※類似度が低くても押せます。生成結果は履歴に追加保存されます。
+          </small>
+        </form>
       {% else %}
-        <div style="margin-top:10px; font-size:12px; color:#666;">
-          reference_urls_debug が空です（URL未入力 or 取得前に弾かれた可能性）。
+        <div style="color:#666; font-size:12px; margin-top:8px;">
+          ※履歴保存に失敗しているため、言い換え再生成は使えません。
         </div>
       {% endif %}
-    </details>
+    </div>
 
     <div class="form-group">
       <label for="generated_intro">【商品紹介文】 ({{ generated_intro_text|length }}文字)</label>
@@ -197,6 +184,25 @@
       <textarea id="generated_specs" readonly rows="10" style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">{{ generated_specs_text }}</textarea>
       <button type="button" onclick="copyToClipboard('generated_specs')" style="margin-top: 5px;">コピー</button>
     </div>
+
+    <details style="margin-top:12px;">
+      <summary>デバッグ：URL本文が取得できているか（開く）</summary>
+      <div style="font-size:12px; color:#444; margin-top:8px;">
+        <div><strong>llm_client_file:</strong> {{ llm_client_file }}</div>
+        <div><strong>raw_urls_debug:</strong> {{ raw_urls_debug }}</div>
+        <div><strong>combined_reference_chars:</strong> {{ combined_reference_chars }}</div>
+        <div><strong>preview:</strong> {{ combined_reference_preview }}</div>
+        <div style="margin-top:8px;"><strong>per_url</strong></div>
+        {% for d in reference_urls_debug %}
+          <div style="margin-top:6px; padding:6px; border:1px solid #eee;">
+            <div><strong>url:</strong> {{ d.url }}</div>
+            <div>allowed={{ d.allowed }} fetch_ok={{ d.fetch_ok }} status={{ d.status }} ok={{ d.ok }} ref_hit={{ d.ref_hit }}</div>
+            <div>method={{ d.method }} chars={{ d.chars }} filtered_reason={{ d.filtered_reason }}</div>
+            <div>preview: {{ d.preview }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    </details>
   {% endif %}
 
   {% if history %}
@@ -207,6 +213,12 @@
       <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd;">
         <div style="color:#666; font-size: 12px;">
           #{{ h.id }} / {{ h.created_at }}
+        </div>
+
+        {% set h_cls = (h.similarity_level or 'blue') %}
+        <div style="margin-top:6px; font-size: 12px; color:#444;">
+          <strong>類似度:</strong>
+          <span class="sim-badge {{ h_cls }}">{{ h.similarity_percent|default(0) }}%</span>
         </div>
 
         {% if h.selected_reference_url %}
@@ -230,15 +242,13 @@
           <button type="button" onclick="copyToClipboard('hist_specs_{{ h.id }}')" style="margin-top: 6px;">スペックをコピー</button>
         </details>
 
-        <!--
         <form method="POST" style="margin-top: 10px;">
-          <input type="hidden" name="action" value="regenerate_from_history">
-          <input type="hidden" name="history_id" value="{{ h.id }}">
+          <input type="hidden" name="action" value="rewrite_once">
           <input type="hidden" name="brand" value="{{ brand }}">
           <input type="hidden" name="reference" value="{{ reference }}">
-          <button type="submit">この履歴で再生成</button>
+          <input type="hidden" name="source_article_id" value="{{ h.id }}">
+          <button type="submit">この履歴を言い換え再生成（1回）</button>
         </form>
-        -->
       </div>
     {% endfor %}
   {% endif %}
@@ -375,4 +385,5 @@ function copyToClipboard(elementId) {
   alert('コピーしました');
 }
 </script>
+
 {% endblock %}

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS
 import llm_client as llmc
 from url_discovery import discover_reference_urls
+
 generate_article = llmc.generate_article
 get_source_policy = llmc.get_source_policy
 
@@ -240,7 +241,7 @@ def _build_history_rows(rows):
         except Exception:
             payload = {}
 
-        created_raw = r["created_at"]  # 例: "2026-02-01 07:11:44" (UTC)
+        created_raw = r["created_at"]  # SQLite (UTC)
         created_jst = created_raw
         try:
             dt = datetime.strptime(created_raw, "%Y-%m-%d %H:%M:%S")
@@ -251,14 +252,16 @@ def _build_history_rows(rows):
 
         out.append({
             "id": r["id"],
-            "created_at": created_jst,  # ★表示はJST
+            "created_at": created_jst,
             "intro_text": r["intro_text"] or "",
             "specs_text": r["specs_text"] or "",
             "selected_reference_url": payload.get("selected_reference_url", "") or payload.get("reference_url", "") or "",
             "selected_reference_reason": payload.get("selected_reference_reason", "") or "",
+            "similarity_percent": payload.get("similarity_percent", 0) or 0,
+            "similarity_level": payload.get("similarity_level", "blue") or "blue",
+            "rewrite_applied": bool(payload.get("rewrite_applied", False)),
         })
     return out
-
 
 
 @app.route('/staff/search', methods=['GET', 'POST'])
@@ -278,6 +281,7 @@ def staff_search():
         "raw_urls_debug": [],
         "similarity_percent": 0,
         "similarity_level": "blue",
+        "saved_article_id": None,
     }
 
     if request.method == 'POST':
@@ -360,6 +364,9 @@ def staff_search():
             flash('オーバーライドを解除しました（マスタに戻しました）', 'success')
             return redirect(url_for('staff_search', brand=brand, reference=reference))
 
+        # ----------------------------
+        # 生成（通常）
+        # ----------------------------
         if action == 'generate_dummy':
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
@@ -376,12 +383,10 @@ def staff_search():
 
             auto_url_debug = {}
 
-            # URLが未入力なら自動抽出（キーが無ければ空で返る＝手入力運用のまま）
             if not raw_urls:
                 auto_urls, auto_url_debug = discover_reference_urls(brand, reference, max_urls=3)
                 reference_urls = auto_urls[:3]
             else:
-                # ★ここでは弾かない（弾くと“何が起きたか”が消える）
                 reference_urls = raw_urls[:3]
 
             conn = get_db_connection()
@@ -408,10 +413,8 @@ def staff_search():
             tone_map = {
                 "practical": "practical",
                 "luxury": "luxury",
-                "magazine": "magazine_story",
                 "magazine_story": "magazine_story",
                 "casual_friendly": "casual_friendly",
-                "ec": "practical",
             }
             tone = tone_map.get(tone_ui, "practical")
 
@@ -433,24 +436,22 @@ def staff_search():
             }
 
             try:
-                intro_text, specs_text, ref_meta = llmc.generate_article(payload)
+                intro_text, specs_text, ref_meta = llmc.generate_article(payload, rewrite_mode="none")
             except Exception as e:
                 flash(f'記事生成中にエラーが発生しました: {e}', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
-            # ★テンプレ表示用は payload ではなく “ref_meta 直結” で渡す（ズレを許さない）
             combined_reference_chars = int(ref_meta.get("combined_reference_chars", 0) or 0)
             combined_reference_preview = ref_meta.get("combined_reference_preview", "") or ""
             reference_urls_debug = ref_meta.get("reference_urls_debug", []) or []
-
             selected_reference_url = ref_meta.get("selected_reference_url", "") or ""
             selected_reference_reason = ref_meta.get("selected_reference_reason", "") or ""
 
-            # ★類似度（ref_metaになければ 0 / blue を必ず保存）
             similarity_percent = int(ref_meta.get("similarity_percent", 0) or 0)
             similarity_level = (ref_meta.get("similarity_level") or "blue").strip() or "blue"
+            rewrite_applied = bool(ref_meta.get("rewrite_applied", False))
 
-            # 履歴保存用に payload_json にも入れる（DB保存はこれで完了）
+            # 履歴保存用 payload
             payload["selected_reference_url"] = selected_reference_url
             payload["selected_reference_reason"] = selected_reference_reason
             payload["combined_reference_chars"] = combined_reference_chars
@@ -458,13 +459,14 @@ def staff_search():
             payload["reference_urls_debug"] = reference_urls_debug
             payload["similarity_percent"] = similarity_percent
             payload["similarity_level"] = similarity_level
+            payload["rewrite_applied"] = rewrite_applied
 
-            # ★ここで dumps する（dumpsを先にやらない）
             payload_json_str = json.dumps(payload, ensure_ascii=False)
 
+            saved_article_id = None
             try:
                 conn_save = get_db_connection()
-                conn_save.execute("""
+                cur = conn_save.execute("""
                     INSERT INTO generated_articles
                     (brand, reference, payload_json, intro_text, specs_text)
                     VALUES (?, ?, ?, ?, ?)
@@ -475,6 +477,7 @@ def staff_search():
                     intro_text,
                     specs_text
                 ))
+                saved_article_id = cur.lastrowid
                 conn_save.commit()
                 conn_save.close()
             except Exception as e:
@@ -510,7 +513,6 @@ def staff_search():
             conn.close()
             history = _build_history_rows(history_rows)
 
-
             return render_template(
                 'search.html',
                 brands=BRANDS,
@@ -536,51 +538,50 @@ def staff_search():
                 raw_urls_debug=(raw_urls if raw_urls else reference_urls),
                 similarity_percent=similarity_percent,
                 similarity_level=similarity_level,
+                saved_article_id=saved_article_id,
             )
 
-        if action == 'regenerate_from_history':
-            flash('履歴から再生成は現在停止中です（今は不要なため）', 'warning')
+        # ----------------------------
+        # 言い換え再生成（任意1回）
+        # source_article_id の payload_json を読み、rewrite_mode="force" で生成
+        # ----------------------------
+        if action == 'rewrite_once':
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
-            return redirect(url_for('staff_search', brand=brand, reference=reference))
+            source_id = request.form.get('source_article_id', '').strip()
 
-            history_id = request.form.get('history_id')
-            brand = request.form.get('brand', '').strip()
-            reference = request.form.get('reference', '').strip()
-
-            if not history_id:
-                flash('再生成対象の履歴が見つかりません', 'error')
+            if not brand or not reference or not source_id:
+                flash('言い換え対象が見つかりません（ID不正）', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             conn = get_db_connection()
-            history_row = conn.execute(
-                "SELECT * FROM generated_articles WHERE id = ?",
-                (history_id,)
-            ).fetchone()
-
-            if not history_row:
+            row = conn.execute("SELECT payload_json FROM generated_articles WHERE id = ?", (source_id,)).fetchone()
+            if not row:
                 conn.close()
-                flash('指定された生成履歴が存在しません', 'error')
+                flash('言い換え対象の履歴が見つかりません', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
-            payload = {}
             try:
-                payload = json.loads(history_row['payload_json'])
+                payload = json.loads(row["payload_json"]) if row["payload_json"] else {}
             except Exception:
                 payload = {}
 
             try:
-                intro_text, specs_text, ref_meta = llmc.generate_article(payload)
+                intro_text, specs_text, ref_meta = llmc.generate_article(payload, rewrite_mode="force")
             except Exception as e:
                 conn.close()
-                flash(f'再生成中にエラーが発生しました: {e}', 'error')
+                flash(f'言い換え再生成に失敗しました: {e}', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
-            combined_reference_chars = ref_meta.get("combined_reference_chars", 0)
-            combined_reference_preview = ref_meta.get("combined_reference_preview", "")
-            reference_urls_debug = ref_meta.get("reference_urls_debug", [])
-            selected_reference_url = ref_meta.get("selected_reference_url", "")
-            selected_reference_reason = ref_meta.get("selected_reference_reason", "")
+            combined_reference_chars = int(ref_meta.get("combined_reference_chars", 0) or 0)
+            combined_reference_preview = ref_meta.get("combined_reference_preview", "") or ""
+            reference_urls_debug = ref_meta.get("reference_urls_debug", []) or []
+            selected_reference_url = ref_meta.get("selected_reference_url", "") or ""
+            selected_reference_reason = ref_meta.get("selected_reference_reason", "") or ""
+
+            similarity_percent = int(ref_meta.get("similarity_percent", 0) or 0)
+            similarity_level = (ref_meta.get("similarity_level") or "blue").strip() or "blue"
+            rewrite_applied = bool(ref_meta.get("rewrite_applied", True))
 
             payload["selected_reference_url"] = selected_reference_url
             payload["selected_reference_reason"] = selected_reference_reason
@@ -589,32 +590,35 @@ def staff_search():
             payload["reference_urls_debug"] = reference_urls_debug
             payload["similarity_percent"] = similarity_percent
             payload["similarity_level"] = similarity_level
+            payload["rewrite_applied"] = rewrite_applied
 
-            conn.execute(
-                """
-                INSERT INTO generated_articles
-                (brand, reference, payload_json, intro_text, specs_text)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    brand,
-                    reference,
-                    json.dumps(payload, ensure_ascii=False),
-                    intro_text,
-                    specs_text
-                )
-            )
-            conn.commit()
+            payload_json_str = json.dumps(payload, ensure_ascii=False)
 
-            master = conn.execute(
-                "SELECT * FROM master_products WHERE brand = ? AND reference = ?",
-                (brand, reference)
-            ).fetchone()
+            saved_article_id = None
+            try:
+                cur = conn.execute("""
+                    INSERT INTO generated_articles
+                    (brand, reference, payload_json, intro_text, specs_text)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    brand, reference, payload_json_str, intro_text, specs_text
+                ))
+                saved_article_id = cur.lastrowid
+                conn.commit()
+            except Exception as e:
+                conn.close()
+                flash(f'生成履歴の保存に失敗しました: {e}', 'error')
+                return redirect(url_for('staff_search', brand=brand, reference=reference))
 
-            override = conn.execute(
-                "SELECT * FROM product_overrides WHERE brand = ? AND reference = ?",
-                (brand, reference)
-            ).fetchone()
+            master = conn.execute('''
+                SELECT * FROM master_products
+                WHERE brand = ? AND reference = ?
+            ''', (brand, reference)).fetchone()
+
+            override = conn.execute('''
+                SELECT * FROM product_overrides
+                WHERE brand = ? AND reference = ?
+            ''', (brand, reference)).fetchone()
 
             canonical = {}
             overridden_fields = set()
@@ -632,7 +636,6 @@ def staff_search():
                 ORDER BY created_at DESC, id DESC
                 LIMIT 5
             """, (brand, reference)).fetchall()
-
             conn.close()
             history = _build_history_rows(history_rows)
 
@@ -658,7 +661,16 @@ def staff_search():
                 reference_urls_debug=reference_urls_debug,
                 llm_client_file=llmc.__file__,
                 raw_urls_debug=(payload.get("reference_urls") or []),
+                similarity_percent=similarity_percent,
+                similarity_level=similarity_level,
+                saved_article_id=saved_article_id,
             )
+
+        if action == 'regenerate_from_history':
+            flash('履歴から再生成は現在停止中です（今は不要なため）', 'warning')
+            brand = request.form.get('brand', '').strip()
+            reference = request.form.get('reference', '').strip()
+            return redirect(url_for('staff_search', brand=brand, reference=reference))
 
         flash('不明な操作です', 'error')
         return redirect(url_for('staff_search'))

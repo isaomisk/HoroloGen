@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import requests
 from bs4 import BeautifulSoup
 from anthropic import Anthropic
@@ -7,11 +8,16 @@ from anthropic import Anthropic
 from urllib.parse import urlparse
 from typing import Tuple, Optional, Dict, Any, List
 
+
 # ----------------------------
 # Anthropic client
 # ----------------------------
 MODEL = os.getenv("HOROLOGEN_CLAUDE_MODEL", "claude-sonnet-4-5")
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+_api_key = os.getenv("ANTHROPIC_API_KEY")
+if not _api_key:
+    raise RuntimeError("ANTHROPIC_API_KEY が未設定です（export してから起動してください）")
+client = Anthropic(api_key=_api_key)
+
 
 # ----------------------------
 # Tool schema (固定JSON出力)
@@ -29,6 +35,7 @@ ARTICLE_TOOL = {
         "required": ["intro_text", "specs_text"],
     },
 }
+
 
 # ----------------------------
 # SYSTEM: base + tone
@@ -90,7 +97,7 @@ editor_note は「販売現場での実体験・所感・技術的ポイント�
 - editor_note の一人称「私は」を保持してよい
 - 会話的・率直な表現として自然に本文へ組み込む
 
-■ luxury / magazine_story の場合
+■ luxury / magazine_story / practical の場合
 - editor_note の内容は必ず反映する
 - 以下の変換を行うこと：
   - 過度に砕けた表現は抑制する
@@ -110,17 +117,12 @@ editor_note は「販売現場での実体験・所感・技術的ポイント�
 - 想像・補完・事実に見える推測は禁止
 
 ────────────────────
-【reference_url の使い方（重要：intro_textで必須）】
+【reference_url の使い方】
 ────────────────────
-- reference_url本文（複数URL結合）は intro_text の「背景段落」を作るために必ず使う
-- 背景段落は intro_text に最低1段落必須（本文がある場合）
-  - 「位置づけ・文脈」を説明する段落にする（例：シリーズ内の役割、語られている評価軸、設計意図、なぜ注目されるか 等）
-  - 参考本文から読み取れる具体点を最低2点入れる（ただし数値・仕様は書かない）
-  - 新旧比較は、本文に明確な根拠がある場合のみ触れる（無い場合は触れない）
-- 数値・仕様（径/厚み/防水/キャリバー/素材/価格 等）は canonical_specs のみを使用する
-- 本文が薄い/無い場合のみ、背景段落は省略し、実用性・装着感中心に寄せる
-- 英語本文でも、出力は日本語で自然に要約して良い（直訳不要）
-
+- 背景説明・文脈補足の材料としてのみ使用する
+- 数値・仕様は canonical_specs のみを使用する
+- 本文が薄い場合は、実用性・装着感を中心に構成する
+- reference_url本文の文章表現をコピーしない（同義の言い換えにする）
 
 ────────────────────
 【specs_text のルール】
@@ -131,6 +133,10 @@ editor_note は「販売現場での実体験・所感・技術的ポイント�
 - 装飾・評価表現は禁止
 """
 
+
+# ----------------------------
+# Tone profiles
+# ----------------------------
 TONE_PROFILES = {
     "practical": {
         "label": "実用・標準",
@@ -163,9 +169,6 @@ TONE_PROFILES = {
 - 専門用語は噛み砕いて説明
 - 店頭でお客様に話しかけるような自然な口調
 - 一人称「私は」を積極的に使用してよい
-- 「私が好きな理由」「個人的に安心できるポイント」などの表現を許可する
-- 専門的な内容も、会話調で噛み砕いて説明する
-- 軽い相づち（「ですよね」「嬉しいポイントです」など）を使ってよい
 """,
     },
     "magazine_story": {
@@ -181,23 +184,15 @@ TONE_PROFILES = {
     },
 }
 
-def build_system(tone: str, has_reference_text: bool, rewrite_mode: bool = False) -> str:
-    profile = TONE_PROFILES.get(tone) or TONE_PROFILES.get("practical") or TONE_PROFILES["casual_friendly"]
+
+def build_system(tone: str, has_reference_text: bool) -> str:
+    profile = TONE_PROFILES.get(tone) or TONE_PROFILES.get("practical") or TONE_PROFILES["practical"]
     if has_reference_text:
         lo, hi = profile["chars_with_url"]
         depth_note = "reference_url本文があるため、背景・文脈を厚めに扱ってよい。"
     else:
         lo, hi = profile["chars_no_url"]
         depth_note = "reference_url本文が薄い/ないため、深掘りを抑制し、安全な範囲でまとめる。"
-
-    rewrite_note = ""
-    if rewrite_mode:
-        rewrite_note = (
-            "\n【言い換え強化モード】\n"
-            "- 参考資料の文章は引用せず、必ず言い換えて要約する\n"
-            "- 同じ言い回しの連続（日本語/英語いずれも）を避ける\n"
-            "- 固有名詞・型番・キャリバー名は保持してよい\n"
-        )
 
     return (
         SYSTEM_BASE
@@ -206,10 +201,9 @@ def build_system(tone: str, has_reference_text: bool, rewrite_mode: bool = False
         + f"\n【intro_text の文字数】\n- 目安：{lo}〜{hi}文字\n- {depth_note}\n"
         + "\n【intro_text の構成】\n"
           "- 段落ごとに1テーマ（読み物として自然に）\n"
-          "- 背景段落を1段落だけ必ず入れる（シリーズの位置づけ/文脈＋店頭目線の短いまとめ）\n"
           "- 事実は canonical_specs / remarks / reference_url本文の範囲でのみ断定\n"
-        + rewrite_note
     )
+
 
 # ----------------------------
 # Trust source registry
@@ -223,7 +217,7 @@ TRUST_SOURCES: Dict[str, Dict[str, Any]] = {
     "iwc.com": {"category": "A", "allowed_use": ["facts", "context"]},
     "panerai.com": {"category": "A", "allowed_use": ["facts", "context"]},
 
-    # B: 正規店/販売店（補助）
+    # B: 正規店/販売店
     "eye-eye-isuzu.co.jp": {"category": "B", "allowed_use": ["context"]},
     "rasin.co.jp": {"category": "B", "allowed_use": ["context"]},
     "evance.co.jp": {"category": "B", "allowed_use": ["context"]},
@@ -236,10 +230,8 @@ TRUST_SOURCES: Dict[str, Dict[str, Any]] = {
     "fratellowatches.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "watchesbysjx.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "revolutionwatch.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "rescapement.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "watchadvice.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "swisswatches-magazine.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "teddybaldassarre.com": {"category": "C", "allowed_use": ["context", "opinion"]},
+    "wornandwound.com": {"category": "C", "allowed_use": ["context", "opinion"]},
 
     # D: マーケット系（用途限定）
     "chrono24.com": {"category": "D", "allowed_use": ["market", "context"]},
@@ -248,6 +240,7 @@ TRUST_SOURCES: Dict[str, Dict[str, Any]] = {
     "wikipedia.org": {"category": "E", "allowed_use": ["context"]},
     "note.com": {"category": "E", "allowed_use": ["context"]},
 }
+
 
 def get_source_policy(url: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
     if not url:
@@ -268,132 +261,125 @@ def get_source_policy(url: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
 
     return False, host, None
 
-def _safe_preview(text: str, n: int = 240) -> str:
-    t = (text or "").replace("\n", " ").strip()
-    if not t:
-        return ""
-    return (t[:n] + ("…" if len(t) > n else "")).strip()
 
 # ----------------------------
-# URL本文取得（失敗しても meta を必ず返す）
+# small helpers
 # ----------------------------
-def fetch_page_text(url: str, max_chars: int = 8000, min_chars: int = 600):
-    """
-    Returns:
-      (text, is_sufficient, meta)
-    """
+def _safe_preview(text: str, n: int = 260) -> str:
+    t = (text or "").strip().replace("\n", " ")
+    return (t[:n] + "…") if len(t) > n else t
+
+
+def _normalize_ref_variants(reference: str) -> List[str]:
+    r = (reference or "").strip()
+    if not r:
+        return []
+    r_up = r.upper()
+    r_nosep = re.sub(r"[\s\.\-_/]", "", r_up)
+    return list({r_up, r_nosep})
+
+
+def _ref_hit(url: str, text: str, reference: str) -> bool:
+    variants = _normalize_ref_variants(reference)
+    if not variants:
+        return False
+    hay = (url or "") + "\n" + (text or "")
+    hay_up = hay.upper()
+    hay_nosep = re.sub(r"[\s\.\-_/]", "", hay_up)
+    for v in variants:
+        if v and (v in hay_up or v in hay_nosep):
+            return True
+    return False
+
+
+# ----------------------------
+# URL本文取得（安全版 / debug付き）
+# ----------------------------
+def fetch_page_text(url: str, max_chars: int = 8000, min_chars: int = 600) -> Tuple[str, bool, Dict[str, Any]]:
     meta: Dict[str, Any] = {
-        "url": (url or "").strip(),
+        "url": url,
         "allowed": False,
         "host": "",
         "fetch_ok": False,
         "status": None,
-        "error": "",
         "method": "",
-        "filtered_reason": "",
         "extracted_chars": 0,
         "extracted_preview": "",
+        "filtered_reason": "",
     }
 
-    url = meta["url"]
+    url = (url or "").strip()
     if not url:
         meta["filtered_reason"] = "empty_url"
         return "", False, meta
 
     allowed, host, _policy = get_source_policy(url)
     meta["allowed"] = bool(allowed)
-    meta["host"] = host or ""
+    meta["host"] = host
     if not allowed:
         meta["filtered_reason"] = "untrusted_domain"
         return "", False, meta
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36 HoroloGen/1.0",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-    }
-
     try:
-        resp = requests.get(url, timeout=20, headers=headers, allow_redirects=True)
-        meta["status"] = resp.status_code
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "HoroloGen/1.0"})
+        meta["status"] = getattr(resp, "status_code", None)
         resp.raise_for_status()
         meta["fetch_ok"] = True
-
         if not resp.encoding or resp.encoding.lower() == "iso-8859-1":
             resp.encoding = resp.apparent_encoding
-        html = resp.text
     except Exception as e:
-        meta["error"] = str(e)
-        meta["filtered_reason"] = "request_failed"
+        meta["filtered_reason"] = f"request_failed:{type(e).__name__}"
         return "", False, meta
 
-    soup = BeautifulSoup(html, "html.parser")
-
+    soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
         tag.decompose()
 
-    selectors = [
-        "main", "article", '[role="main"]',
-        ".article", ".post", ".content",
-        ".entry-content", ".post-content", ".single-content",
-        ".article-body", ".c-article-content",
-        ".wp-block-post-content", ".page-content", ".content-area"
-    ]
-
-    root = None
-    for sel in selectors:
-        el = soup.select_one(sel)
+    # できるだけ本文っぽいところを拾う
+    candidates = []
+    for selector in ["main", "article", '[role="main"]', ".article", ".post", ".content", ".entry-content", ".post-content"]:
+        el = soup.select_one(selector)
         if el:
-            root = el
-            meta["method"] = f"selector:{sel}"
-            break
+            candidates.append((selector, el))
 
-    if root is None:
+    if candidates:
+        sel, root = candidates[0]
+        meta["method"] = f"selector:{sel}"
+    else:
         root = soup
         meta["method"] = "fallback:document"
 
-    parts: List[str] = []
+    parts = []
     for el in root.find_all(["h1", "h2", "h3", "p", "li"]):
         text = el.get_text(" ", strip=True)
         if not text:
             continue
-        if len(text) < 20:
+        if len(text) < 15:
             continue
         parts.append(text)
 
+    if not parts:
+        text_all = root.get_text("\n", strip=True)
+        lines = [l.strip() for l in text_all.splitlines() if len(l.strip()) >= 15]
+        parts = lines
+
     text = "\n".join(parts).strip()
 
-    # 補助：meta description / og:description
-    if len(text) < 250:
-        desc = ""
-        m = soup.find("meta", attrs={"name": "description"})
-        if m and m.get("content"):
-            desc = (m.get("content") or "").strip()
-        if not desc:
-            og = soup.find("meta", attrs={"property": "og:description"})
-            if og and og.get("content"):
-                desc = (og.get("content") or "").strip()
-        if desc:
-            meta["method"] += "+meta_description"
-            text = (desc + "\n\n" + text).strip()
+    if not text:
+        meta["filtered_reason"] = "no_text_extracted"
+        return "", False, meta
 
     if len(text) > max_chars:
         text = text[:max_chars]
 
     meta["extracted_chars"] = len(text)
-    meta["extracted_preview"] = _safe_preview(text, 180)
+    meta["extracted_preview"] = _safe_preview(text, 220)
 
-    if len(text) == 0:
-        meta["filtered_reason"] = "extracted_empty"
-        return "", False, meta
+    ok = len(text) >= min_chars
+    if not ok and not meta["filtered_reason"]:
+        meta["filtered_reason"] = "too_short"
+    return text, ok, meta
 
-    is_sufficient = len(text) >= min_chars
-    if not is_sufficient:
-        meta["filtered_reason"] = f"too_short<{min_chars}"
-
-    return text, is_sufficient, meta
 
 # ----------------------------
 # facts 正規化（読みやすさのため）
@@ -499,6 +485,7 @@ def _specs_text_from_canonical(nf: dict) -> str:
         lines.append(f"・{label}：{v}")
     return "\n".join(lines)
 
+
 # ----------------------------
 # User prompt builder
 # ----------------------------
@@ -514,7 +501,7 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 
     brand = product.get("brand", "")
     ref = product.get("reference", "")
-    tone = style.get("tone", "casual_friendly")
+    tone = style.get("tone", "practical")
 
     facts_norm = _normalize_facts(facts)
     specs_template = _specs_text_from_canonical(facts_norm)
@@ -586,17 +573,12 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 - 語り手は「正規時計店スタッフ」。一人称の使い方はトーン規定に従う
 - 事実の優先順位：canonical_specs > remarks > reference_url本文
 - 矛盾がある場合は必ず上位を採用する
+- reference_url本文の文章表現をコピーしない（同義の言い換えにする）
 - specs_text は必ず出力する（空にしない）
 - specs_text は上のテンプレをそのまま使う（順序・形式を変えない）
-- reference_url本文は「同コレクション/同モデル系列の記事」の可能性がある。背景・歴史・位置づけの説明に使ってよいが、対象リファレンス固有（文字盤色・仕様差など）の断定は canonical_specs / remarks にある場合のみ行う
-- （reference_url本文がある場合）intro_text は次の構成を必ず満たす：
-  1) 背景段落（必須・1段落）：reference_url本文から「位置づけ/文脈」を要約し、具体点を2つ以上入れる（数値・仕様は禁止）
-  2) 実用段落（1段落以上）：装着感/使い勝手/取り回しを、canonical_specs と editor_note の範囲でまとめる
-  3) 店頭目線のまとめ（必須・最後の1段落）：「どういう方/用途に合うか」をスタッフとして整理して締める（煽り禁止）
-- intro_text に「背景段落」を1段落だけ必ず含める（見出しは禁止。自然な段落で）。reference_url本文がある場合はそこから文脈を要約し、無い場合はcanonical_specs/remarksの範囲で安全に書く
-- 新旧比較は reference_url本文に明確な根拠がある場合のみ触れる（無理に作らない）
 {target_note}
 """
+
 
 # ----------------------------
 # Hype ban
@@ -611,75 +593,74 @@ def validate_no_hype(text: str) -> list:
     t = text or ""
     return [p for p in BANNED_PHRASES if p in t]
 
-import re
-from typing import List  # 既にあれば不要
 
-def _normalize_for_similarity(text: str) -> str:
-    t = (text or "").lower()
-    # 余計な空白を潰す
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-def estimate_overlap_percent(intro_text: str, reference_text: str, n: int = 10) -> float:
-    """
-    intro_text と reference_text の「文字n-gram」重なり率(%) を簡易推定。
-    - overlap = intro側のn-gramのうち、referenceにも存在する割合
-    - 日本語/英語混在でも動く
-    """
-    a = _normalize_for_similarity(intro_text)
-    b = _normalize_for_similarity(reference_text)
-
-    a = a.replace(" ", "")
-    b = b.replace(" ", "")
-
-    if len(a) < n or len(b) < n:
-        return 0.0
-
-    a_grams = {a[i:i+n] for i in range(len(a) - n + 1)}
-    b_grams = {b[i:i+n] for i in range(len(b) - n + 1)}
-
-    if not a_grams:
-        return 0.0
-
-    overlap = len(a_grams & b_grams)
-    pct = (overlap / max(len(a_grams), 1)) * 100.0
-    return round(pct, 1)
-
-def similarity_level(pct: float) -> str:
-    """
-    青/黄/赤の3段階
-    - blue: 0〜9.9%
-    - yellow: 10.0〜17.9%
-    - red: 18.0%〜
-    """
-    try:
-        p = float(pct)
-    except Exception:
-        p = 0.0
-    if p >= 18.0:
-        return "red"
-    if p >= 10.0:
-        return "yellow"
-    return "blue"
-
-
+# ----------------------------
+# Tool extract helpers
+# ----------------------------
 def _pick_tool_input(message) -> Dict[str, Any]:
-    tool_uses = [b for b in message.content if getattr(b, "type", None) == "tool_use"]
+    tool_uses = [b for b in (message.content or []) if getattr(b, "type", None) == "tool_use"]
     if not tool_uses:
         return {}
-    return tool_uses[0].input or {}
+    data = tool_uses[0].input or {}
+    if not isinstance(data, dict):
+        return {}
+    return data
 
 def _is_valid_article_dict(d: Dict[str, Any]) -> bool:
     if not isinstance(d, dict):
         return False
-    intro = (d.get("intro_text") or "").strip()
-    specs = (d.get("specs_text") or "").strip()
-    return bool(intro and specs)
+    it = (d.get("intro_text") or "").strip()
+    st = (d.get("specs_text") or "").strip()
+    return bool(it) and bool(st)
+
+
+# ----------------------------
+# Similarity (language-agnostic char n-gram Jaccard)
+# ----------------------------
+def _ngram_set(text: str, n: int = 3, max_len: int = 9000) -> set:
+    t = (text or "").strip()
+    if not t:
+        return set()
+    # remove urls and excessive whitespace
+    t = re.sub(r"https?://\S+", " ", t)
+    t = re.sub(r"\s+", "", t)
+    t = t[:max_len]
+    if len(t) < n:
+        return {t}
+    return {t[i:i+n] for i in range(0, len(t) - n + 1)}
+
+def similarity_percent(a: str, b: str) -> int:
+    A = _ngram_set(a, 3)
+    B = _ngram_set(b, 3)
+    if not A or not B:
+        return 0
+    inter = len(A & B)
+    union = len(A | B)
+    if union == 0:
+        return 0
+    return int(round((inter / union) * 100))
+
+def similarity_level(pct: int) -> str:
+    # 運用で調整前提（まずは安全寄り）
+    if pct >= 35:
+        return "red"
+    if pct >= 20:
+        return "yellow"
+    return "blue"
+
 
 # ----------------------------
 # Main entry: generate_article
+# rewrite_mode:
+#   "none"  : 通常生成
+#   "force" : 必ず1回だけ「言い換え再生成」
+#   "auto"  : 類似が高いときだけ1回だけ言い換え
 # ----------------------------
-def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
+def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, str, Dict[str, Any]]:
+    product = payload.get("product", {}) or {}
+    ref_code = (product.get("reference") or "").strip()
+
+    # 参考URL（最大3本）
     reference_urls = payload.get("reference_urls") or []
     if not isinstance(reference_urls, list):
         reference_urls = []
@@ -699,16 +680,7 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
     chosen_text = ""
     chosen_reason = ""
 
-    # 対象リファレンス（本文に含まれていれば優先採用する）
-    product_ref = ((payload.get("product") or {}).get("reference") or "").strip()
-
-    def _norm_ref(s: str) -> str:
-        # "IW371605" / "310.30.42.50.01.002" などを比較しやすく
-        return "".join(ch for ch in (s or "").upper() if ch.isalnum())
-
-    ref_norm = _norm_ref(product_ref)
-
-    # ★URLが0件でも debug に残す（ゼロ許容しない）
+    # URL0件でも debug を残す
     if not reference_urls:
         per_url_debug.append({
             "url": "(no urls)",
@@ -724,12 +696,13 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
             "ref_hit": False,
         })
 
+    # 1) 取得
     for u in reference_urls:
         text, ok, meta = fetch_page_text(u)
-        per_url_texts.append({"url": u, "text": text or ""})
+        hit = _ref_hit(u, text, ref_code)
+        meta["ref_hit"] = bool(hit)
 
-        text_norm = _norm_ref(text)
-        ref_hit = bool(ref_norm) and (ref_norm in text_norm)
+        per_url_texts.append({"url": u, "text": text or ""})
 
         per_url_debug.append({
             "url": u,
@@ -742,53 +715,146 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
             "ok": bool(ok),
             "preview": meta.get("extracted_preview", ""),
             "filtered_reason": meta.get("filtered_reason", ""),
-            "ref_hit": ref_hit,
+            "ref_hit": bool(hit),
         })
 
         if len(text) > len(best_text):
             best_text = text
             best_url = u
 
-    # 採用URLの選定ルール：
-    # 1) ok かつ ref_hit があるURLがあれば最優先
-    # 2) 次に ok のURL（最初の1本）
-    # 3) 最後に最長本文
-    hit_ok = next((x for x in per_url_debug if x.get("ok") and x.get("ref_hit")), None)
-    ok_any = next((x for x in per_url_debug if x.get("ok")), None)
+    # 2) 採用URL選定（ref_hit優先 → ok優先 → 最長）
+    for item in per_url_debug:
+        if item.get("ok") and item.get("ref_hit"):
+            chosen_url = item.get("url", "")
+            chosen_text = next((x["text"] for x in per_url_texts if x["url"] == chosen_url), "")
+            chosen_reason = "リファレンス一致のため採用"
+            break
 
-    if hit_ok:
-        chosen_url = hit_ok["url"]
-        chosen_text = next((t["text"] for t in per_url_texts if t["url"] == chosen_url), "") or ""
-        chosen_reason = "リファレンス一致のため採用"
-    elif ok_any:
-        chosen_url = ok_any["url"]
-        chosen_text = next((t["text"] for t in per_url_texts if t["url"] == chosen_url), "") or ""
-        chosen_reason = "背景用に採用（本文十分）"
-    else:
+    if not chosen_url:
+        for item in per_url_debug:
+            if item.get("ok"):
+                chosen_url = item.get("url", "")
+                chosen_text = next((x["text"] for x in per_url_texts if x["url"] == chosen_url), "")
+                chosen_reason = "本文が十分だったので採用"
+                break
+
+    if not chosen_url:
         chosen_url = best_url
         chosen_text = best_text
-        chosen_reason = "背景用に採用（最長本文）" if chosen_url else "参考URLなし"
+        if chosen_url:
+            chosen_reason = "一番長い本文だったので採用"
+        else:
+            chosen_reason = "参考URLなし（本文なし）"
 
-    # ★結合は「3本を必ず混ぜる」：各URL最大2200 / 合計最大8000
+    # 3) 本文結合（各URL最大2500 / 合計最大8000）
     combined_blocks = []
     total = 0
-    PER_URL_MAX = 2200
-    TOTAL_MAX = 8000
-
     for item in per_url_texts:
         t = (item.get("text") or "").strip()
         if not t:
             continue
-        t = t[:PER_URL_MAX]
+        t = t[:2500]
         block = f"URL: {item['url']}\n本文抜粋:\n{t}"
-        if total + len(block) > TOTAL_MAX:
-            continue
+        if total + len(block) > 8000:
+            break
         combined_blocks.append(block)
         total += len(block)
 
     combined_reference_text = "\n\n---\n\n".join(combined_blocks).strip()
 
+    # build_user_prompt が表示に使う代表URL
     payload["reference_url"] = chosen_url
+
+    has_ref = bool(len(combined_reference_text) >= 400)
+    tone = (payload.get("style", {}) or {}).get("tone", "practical")
+    system = build_system(tone, has_reference_text=has_ref)
+    user_prompt = build_user_prompt(payload, combined_reference_text)
+
+    def _call_claude(sys_text: str, u_prompt: str, temperature: float = 0.3):
+        return client.messages.create(
+            model=MODEL,
+            max_tokens=1700,
+            temperature=temperature,
+            system=sys_text,
+            messages=[{"role": "user", "content": u_prompt}],
+            tools=[ARTICLE_TOOL],
+            tool_choice={"type": "tool", "name": "return_article"},
+        )
+
+    def _extract_once(sys_text: str, u_prompt: str, temperature: float = 0.3) -> Dict[str, Any]:
+        msg = _call_claude(sys_text, u_prompt, temperature=temperature)
+        return _pick_tool_input(msg)
+
+    # 4) 通常生成（tool不正に備えて最大2回）
+    data = _extract_once(system, user_prompt, temperature=0.3)
+    if not _is_valid_article_dict(data):
+        data2 = _extract_once(system, user_prompt, temperature=0.3)
+        if _is_valid_article_dict(data2):
+            data = data2
+
+    intro = (data.get("intro_text") or "").strip()
+    specs = (data.get("specs_text") or "").strip()
+
+    # specs_text 欠損時の保険：canonical から生成
+    if intro and not specs:
+        facts = payload.get("facts", {}) or {}
+        facts_norm = _normalize_facts(facts)
+        specs = _specs_text_from_canonical(facts_norm).strip()
+
+    if not intro or not specs:
+        raise ValueError(f"Claudeのtool出力が不正です。keys={list(data.keys())} input={data}")
+
+    hits = validate_no_hype(intro)
+    if hits:
+        raise ValueError(f"煽り表現が検出されました: {hits}")
+
+    # 5) 類似度
+    sim_before = similarity_percent(intro, combined_reference_text)
+    lvl_before = similarity_level(sim_before)
+
+    # 6) 言い換え再生成（任意/自動/強制）
+    do_rewrite = False
+    if rewrite_mode == "force":
+        do_rewrite = True
+    elif rewrite_mode == "auto" and sim_before >= 35:
+        do_rewrite = True
+
+    sim_after = sim_before
+    lvl_after = lvl_before
+
+    if do_rewrite:
+        rewrite_system = system + "\n\n【言い換え再生成（重要）】\n- reference_url本文の表現の“言い回し”は流用しない\n- 構成と文のつながりを組み替え、同義の言い換えを徹底する\n- 固有名詞・型番・数値は保持する\n"
+
+        rewrite_user = user_prompt + f"""
+
+[追加指示：言い換え再生成]
+- 直前に作った intro_text のドラフトを渡すので、意味を保持しつつ大きく言い換えてください。
+- reference_url本文との表現重複を避けるため、言い回し・語順・段落構成を組み替えてください。
+- specs_text はテンプレの形式を維持してください（内容はcanonical_specs準拠）。
+
+[直前のintro_textドラフト]
+{intro}
+"""
+        data_r = _extract_once(rewrite_system, rewrite_user, temperature=0.4)
+        if not _is_valid_article_dict(data_r):
+            data_r2 = _extract_once(rewrite_system, rewrite_user, temperature=0.4)
+            if _is_valid_article_dict(data_r2):
+                data_r = data_r2
+
+        intro_r = (data_r.get("intro_text") or "").strip()
+        specs_r = (data_r.get("specs_text") or "").strip()
+
+        if intro_r:
+            intro = intro_r
+        if specs_r:
+            specs = specs_r
+
+        hits2 = validate_no_hype(intro)
+        if hits2:
+            raise ValueError(f"煽り表現が検出されました: {hits2}")
+
+        sim_after = similarity_percent(intro, combined_reference_text)
+        lvl_after = similarity_level(sim_after)
 
     ref_meta = {
         "selected_reference_url": chosen_url,
@@ -797,53 +863,15 @@ def generate_article(payload: dict) -> tuple[str, str, Dict[str, Any]]:
         "combined_reference_chars": len(combined_reference_text or ""),
         "combined_reference_preview": _safe_preview(combined_reference_text, 360),
         "reference_urls_debug": per_url_debug,
+
+        # similarity (final)
+        "similarity_percent": int(sim_after),
+        "similarity_level": str(lvl_after),
+
+        # debug
+        "similarity_before_percent": int(sim_before),
+        "similarity_before_level": str(lvl_before),
+        "rewrite_applied": bool(do_rewrite),
     }
-
-    tone = (payload.get("style", {}) or {}).get("tone", "practical")
-    # “短いが0ではない” でも URLあり扱いに寄せる
-    has_ref = len(combined_reference_text or "") >= 200
-    rewrite_mode = bool((payload.get("options", {}) or {}).get("rewrite_mode"))
-    system = build_system(tone, has_reference_text=has_ref, rewrite_mode=rewrite_mode)
-    user_prompt = build_user_prompt(payload, combined_reference_text)
-
-    def _call_claude():
-        return client.messages.create(
-            model=MODEL,
-            max_tokens=1700,
-            temperature=0.3,
-            system=system,
-            messages=[{"role": "user", "content": user_prompt}],
-            tools=[ARTICLE_TOOL],
-            tool_choice={"type": "tool", "name": "return_article"},
-        )
-
-    # tool出力が空/欠損するケースへの耐性（最大2回）
-    data: Dict[str, Any] = {}
-    for _ in range(2):
-        msg = _call_claude()
-        data = _pick_tool_input(msg) or {}
-        if _is_valid_article_dict(data):
-            break
-
-    intro = (data.get("intro_text") or "").strip()
-    specs = (data.get("specs_text") or "").strip()
-
-    # 類似度（intro vs reference）
-    sim_pct = estimate_overlap_percent(intro, combined_reference_text)
-    sim_level = similarity_level(sim_pct)
-    ref_meta["similarity_percent"] = sim_pct
-    ref_meta["similarity_level"] = sim_level
-
-    if intro and not specs:
-        facts = payload.get("facts", {}) or {}
-        facts_norm = _normalize_facts(facts)
-        specs = _specs_text_from_canonical(facts_norm).strip()
-
-    if not intro or not specs:
-        raise ValueError(f"Claudeのtool出力が不正です。keys={list((data or {}).keys())} input={data}")
-
-    hits = validate_no_hype(intro)
-    if hits:
-        raise ValueError(f"煽り表現が検出されました: {hits}")
 
     return intro, specs, ref_meta
