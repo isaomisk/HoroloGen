@@ -70,6 +70,17 @@
   </div>
 
   <h2>記事生成（ダミー）</h2>
+  <div class="alert" style="border:1px solid #ddd; background:#fafafa; margin-bottom:12px;">
+    <div><strong>プラン:</strong> {{ plan_mode }}</div>
+    <div><strong>対象月:</strong> {{ month_key }}</div>
+    {% if plan_mode == 'unlimited' %}
+      <div><strong>生成回数:</strong> 無制限</div>
+    {% else %}
+      <div><strong>今月の生成回数:</strong> {{ monthly_used }} / {{ monthly_limit }}</div>
+      <div><strong>残り:</strong> {{ monthly_remaining }}</div>
+    {% endif %}
+  </div>
+
   <form method="POST" style="margin-bottom: 30px;">
     <input type="hidden" name="action" value="generate_dummy">
     <input type="hidden" name="brand" value="{{ brand }}">
@@ -131,7 +142,11 @@
       </small>
     </div>
 
-    <button type="submit">記事生成（ダミー）</button>
+    {% set quota_ok = (plan_mode == 'unlimited') or (monthly_remaining|default(0) > 0) %}
+    <button type="submit" {% if not quota_ok %}disabled{% endif %}>記事生成（ダミー）</button>
+    {% if not quota_ok %}
+      <div style="color:#c00; font-size:12px; margin-top:6px;">※今月の生成上限に達しています</div>
+    {% endif %}
   </form>
 
   {% if generated_intro_text or generated_specs_text %}
@@ -241,13 +256,23 @@
           <button type="button" onclick="copyToClipboard('hist_specs_{{ h.id }}')" style="margin-top: 6px;">スペックをコピー</button>
         </details>
 
-        <form method="POST" style="margin-top: 10px;">
-          <input type="hidden" name="action" value="rewrite_once">
-          <input type="hidden" name="brand" value="{{ brand }}">
-          <input type="hidden" name="reference" value="{{ reference }}">
-          <input type="hidden" name="source_article_id" value="{{ h.id }}">
-          <button type="submit">この履歴を言い換え再生成（1回）</button>
-        </form>
+        {% if (h.rewrite_depth|default(0) == 0) and ((plan_mode == 'unlimited') or (monthly_remaining|default(0) > 0)) %}
+          <form method="POST" style="margin-top: 10px;">
+            <input type="hidden" name="action" value="rewrite_once">
+            <input type="hidden" name="brand" value="{{ brand }}">
+            <input type="hidden" name="reference" value="{{ reference }}">
+            <input type="hidden" name="source_article_id" value="{{ h.id }}">
+            <button type="submit" onclick="this.disabled=true; this.form.submit();">この履歴を言い換え再生成（1回）</button>
+          </form>
+        {% elif (h.rewrite_depth|default(0) != 0) %}
+          <div style="color:#666; font-size:12px; margin-top:8px;">
+            ※この履歴は言い換え済みのため、再度の言い換えはできません（最大1回）
+          </div>
+        {% else %}
+          <div style="color:#c00; font-size:12px; margin-top:8px;">
+            ※今月の生成上限に達しているため、言い換えできません
+          </div>
+        {% endif %}
       </div>
     {% endfor %}
   {% endif %}
@@ -345,44 +370,4 @@
 
       <div class="form-group">
         <label for="lug_width_mm">ラグ幅 (mm)</label>
-        <input type="text" id="lug_width_mm" name="lug_width_mm" value="{{ override.lug_width_mm if override else '' }}" placeholder="{{ master.lug_width_mm if master else '' }}">
-      </div>
-
-      <div class="form-group" style="grid-column: 1 / -1;">
-        <label for="remarks">備考</label>
-        <textarea id="remarks" name="remarks" rows="3">{{ override.remarks if override else '' }}</textarea>
-        {% if master and master.remarks %}
-        <small style="color: #666;">マスタ値: {{ master.remarks }}</small>
-        {% endif %}
-      </div>
-    </div>
-
-    <div class="form-group" style="grid-column: 1 / -1; margin-top: 15px;">
-      <label for="editor_note">スタッフ追加入力（必ず文章に反映されます）</label>
-      <textarea
-        id="editor_note"
-        name="editor_note"
-        rows="4"
-        placeholder="接客での実体験・商品の魅力・エピソードなどを自由に記載してください。">{{ override.editor_note if override and override.editor_note else '' }}</textarea>
-
-      <small style="color:#666;">
-        ※ここに入力した内容は、商品紹介文（intro）に必ず反映されます。
-      </small>
-    </div>
-
-    <button type="submit" style="margin-top: 20px;">オーバーライドを保存</button>
-  </form>
-{% endif %}
-
-<script>
-function copyToClipboard(elementId) {
-  const el = document.getElementById(elementId);
-  if (!el) return;
-  el.select();
-  el.setSelectionRange(0, 999999);
-  document.execCommand('copy');
-  alert('コピーしました');
-}
-</script>
-
-{% endblock %}
+        <input type="text" id="lug_width_mm" name="lug_width_mm" value="{{ override.lug_width_mm if override else '' }}" placeho

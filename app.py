@@ -10,21 +10,183 @@ from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS
 import llm_client as llmc
 from url_discovery import discover_reference_urls
 
-generate_article = llmc.generate_article
-get_source_policy = llmc.get_source_policy
+# ----------------------------
+# Plan / quota settings
+# ----------------------------
+PLAN_MODE = os.getenv("HOROLOGEN_PLAN", "limited").strip().lower()  # "limited" / "unlimited"
+MONTHLY_LIMIT = int(os.getenv("HOROLOGEN_MONTHLY_LIMIT", "30"))
 
-
+# ----------------------------
+# Flask
+# ----------------------------
 app = Flask(__name__)
 init_db()
 app.secret_key = 'horologen-secret-key-change-in-production'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
-
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 BRANDS = ['cartier', 'omega', 'grand_seiko', 'iwc', 'panerai']
 
 
+# ----------------------------
+# Error humanizer (public message) + log detail
+# ----------------------------
+def humanize_llm_error(e: Exception) -> str:
+    msg = str(e) or ""
+    m = msg.lower()
+
+    if "credit balance is too low" in m or "plans & billing" in m:
+        return "使用上限に達しました。管理者にお問い合わせください。"
+    if "rate limit" in m or "too many requests" in m:
+        return "アクセスが集中しています。少し時間を置いてから再度お試しください。"
+    if "api key" in m or "authentication" in m or "unauthorized" in m:
+        return "認証エラーが発生しました。管理者にお問い合わせください。"
+    if "timeout" in m or "timed out" in m or "connection" in m:
+        return "通信が不安定です。時間を置いてから再度お試しください。"
+
+    return "エラーが発生しました。管理者にお問い合わせください。"
+
+
+# ----------------------------
+# Quota helpers (service-wide monthly limit)
+# ----------------------------
+def _month_key_jst() -> str:
+    dt = datetime.utcnow() + timedelta(hours=9)
+    return dt.strftime("%Y-%m")
+
+def get_monthly_usage(conn) -> int:
+    mk = _month_key_jst()
+    row = conn.execute(
+        "SELECT used_count FROM monthly_generation_usage WHERE month_key = ?",
+        (mk,)
+    ).fetchone()
+    return int(row["used_count"]) if row else 0
+
+def remaining_quota(conn) -> int:
+    if PLAN_MODE == "unlimited":
+        return 10**9  # display only
+    used = get_monthly_usage(conn)
+    return max(0, MONTHLY_LIMIT - used)
+
+def consume_quota_or_block(n: int = 1) -> tuple[bool, str]:
+    """
+    called right before LLM call.
+    limited: if exceeded => block. if OK => increment used_count (+n)
+    unlimited: always OK
+    """
+    if PLAN_MODE == "unlimited":
+        return True, ""
+
+    conn = get_db_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        mk = _month_key_jst()
+
+        row = conn.execute(
+            "SELECT used_count FROM monthly_generation_usage WHERE month_key = ?",
+            (mk,)
+        ).fetchone()
+        used = int(row["used_count"]) if row else 0
+
+        if used + n > MONTHLY_LIMIT:
+            conn.rollback()
+            return False, "今月の生成回数の上限に達しました。管理者にお問い合わせください。"
+
+        if row:
+            conn.execute(
+                "UPDATE monthly_generation_usage "
+                "SET used_count = used_count + ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE month_key = ?",
+                (n, mk)
+            )
+        else:
+            conn.execute(
+                "INSERT INTO monthly_generation_usage (month_key, used_count) VALUES (?, ?)",
+                (mk, n)
+            )
+
+        conn.commit()
+        return True, ""
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        app.logger.exception("quota check/update failed: %s", e)
+        return False, "システム側でエラーが発生しました。管理者にお問い合わせください。"
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def get_quota_view() -> tuple[str, int, int]:
+    conn = get_db_connection()
+    try:
+        mk = _month_key_jst()
+        used = get_monthly_usage(conn)
+        rem = remaining_quota(conn)
+        return mk, used, rem
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+# ----------------------------
+# History view helper
+# ----------------------------
+def _build_history_rows(rows):
+    out = []
+    for r in rows:
+        payload = {}
+        try:
+            payload = json.loads(r['payload_json']) if r['payload_json'] else {}
+        except Exception:
+            payload = {}
+
+        created_raw = r["created_at"]  # SQLite UTC
+        created_jst = created_raw
+        try:
+            dt = datetime.strptime(created_raw, "%Y-%m-%d %H:%M:%S")
+            created_jst = (dt + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+
+        # Prefer DB columns if present, fallback to payload (for old records)
+        db_depth = None
+        db_parent = None
+        try:
+            db_depth = r["rewrite_depth"]
+            db_parent = r["rewrite_parent_id"]
+        except Exception:
+            pass
+
+        depth = int(db_depth) if db_depth is not None else int(payload.get("rewrite_depth", 0) or 0)
+        parent_id = db_parent if db_parent is not None else payload.get("rewrite_parent_id", None)
+
+        out.append({
+            "id": r["id"],
+            "created_at": created_jst,
+            "intro_text": r["intro_text"] or "",
+            "specs_text": r["specs_text"] or "",
+            "selected_reference_url": payload.get("selected_reference_url", "") or payload.get("reference_url", "") or "",
+            "selected_reference_reason": payload.get("selected_reference_reason", "") or "",
+            "similarity_percent": payload.get("similarity_percent", 0) or 0,
+            "similarity_level": payload.get("similarity_level", "blue") or "blue",
+            "rewrite_applied": bool(payload.get("rewrite_applied", False)),
+
+            "rewrite_depth": depth,
+            "rewrite_parent_id": parent_id,
+        })
+    return out
+
+
+# ----------------------------
+# Routes
+# ----------------------------
 @app.route('/')
 def index():
     return redirect(url_for('admin_upload'))
@@ -232,38 +394,6 @@ def admin_upload():
     return render_template('admin.html', latest_upload=latest_upload, sample_diffs=sample_diffs)
 
 
-def _build_history_rows(rows):
-    out = []
-    for r in rows:
-        payload = {}
-        try:
-            payload = json.loads(r['payload_json']) if r['payload_json'] else {}
-        except Exception:
-            payload = {}
-
-        created_raw = r["created_at"]  # SQLite (UTC)
-        created_jst = created_raw
-        try:
-            dt = datetime.strptime(created_raw, "%Y-%m-%d %H:%M:%S")
-            dt_jst = dt + timedelta(hours=9)
-            created_jst = dt_jst.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            pass
-
-        out.append({
-            "id": r["id"],
-            "created_at": created_jst,
-            "intro_text": r["intro_text"] or "",
-            "specs_text": r["specs_text"] or "",
-            "selected_reference_url": payload.get("selected_reference_url", "") or payload.get("reference_url", "") or "",
-            "selected_reference_reason": payload.get("selected_reference_reason", "") or "",
-            "similarity_percent": payload.get("similarity_percent", 0) or 0,
-            "similarity_level": payload.get("similarity_level", "blue") or "blue",
-            "rewrite_applied": bool(payload.get("rewrite_applied", False)),
-        })
-    return out
-
-
 @app.route('/staff/search', methods=['GET', 'POST'])
 def staff_search():
     fields = [
@@ -273,6 +403,7 @@ def staff_search():
         'case_thickness_mm', 'lug_width_mm', 'remarks',
     ]
 
+    # NOTE: do NOT put plan_mode/monthly_* here (avoid duplicate keyword bugs)
     debug_defaults = {
         "combined_reference_chars": 0,
         "combined_reference_preview": "",
@@ -291,16 +422,26 @@ def staff_search():
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
             if not brand or not reference:
-                flash('ブランドとリファレンスを入力してください', 'error')
-                return render_template('search.html', brands=BRANDS, **debug_defaults)
+                mk, used, rem = get_quota_view()
+                return render_template(
+                    'search.html',
+                    brands=BRANDS,
+                    plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
+                    **debug_defaults
+                )
             return redirect(url_for('staff_search', brand=brand, reference=reference))
 
         if action == 'save_override':
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
             if not brand or not reference:
-                flash('ブランドとリファレンスを入力してください', 'error')
-                return render_template('search.html', brands=BRANDS, **debug_defaults)
+                mk, used, rem = get_quota_view()
+                return render_template(
+                    'search.html',
+                    brands=BRANDS,
+                    plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
+                    **debug_defaults
+                )
 
             data = {'brand': brand, 'reference': reference}
             for f in fields:
@@ -365,7 +506,7 @@ def staff_search():
             return redirect(url_for('staff_search', brand=brand, reference=reference))
 
         # ----------------------------
-        # 生成（通常）
+        # Generate
         # ----------------------------
         if action == 'generate_dummy':
             brand = request.form.get('brand', '').strip()
@@ -381,10 +522,8 @@ def staff_search():
             ]
             raw_urls = [u for u in raw_urls if u]
 
-            auto_url_debug = {}
-
             if not raw_urls:
-                auto_urls, auto_url_debug = discover_reference_urls(brand, reference, max_urls=3)
+                auto_urls, _auto_debug = discover_reference_urls(brand, reference, max_urls=3)
                 reference_urls = auto_urls[:3]
             else:
                 reference_urls = raw_urls[:3]
@@ -435,10 +574,16 @@ def staff_search():
                 'reference_url': reference_urls[0] if reference_urls else "",
             }
 
+            ok, msg = consume_quota_or_block(n=1)
+            if not ok:
+                flash(msg, 'error')
+                return redirect(url_for('staff_search', brand=brand, reference=reference))
+
             try:
                 intro_text, specs_text, ref_meta = llmc.generate_article(payload, rewrite_mode="none")
             except Exception as e:
-                flash(f'記事生成中にエラーが発生しました: {e}', 'error')
+                app.logger.exception("LLM generate_dummy failed: %s", e)
+                flash(humanize_llm_error(e), 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             combined_reference_chars = int(ref_meta.get("combined_reference_chars", 0) or 0)
@@ -451,7 +596,6 @@ def staff_search():
             similarity_level = (ref_meta.get("similarity_level") or "blue").strip() or "blue"
             rewrite_applied = bool(ref_meta.get("rewrite_applied", False))
 
-            # 履歴保存用 payload
             payload["selected_reference_url"] = selected_reference_url
             payload["selected_reference_reason"] = selected_reference_reason
             payload["combined_reference_chars"] = combined_reference_chars
@@ -461,24 +605,29 @@ def staff_search():
             payload["similarity_level"] = similarity_level
             payload["rewrite_applied"] = rewrite_applied
 
-            payload_json_str = json.dumps(payload, ensure_ascii=False)
-
             saved_article_id = None
             try:
                 conn_save = get_db_connection()
+
+                payload["rewrite_depth"] = 0
+                payload["rewrite_parent_id"] = None
+                payload["rewrite_applied"] = False
+
                 cur = conn_save.execute("""
                     INSERT INTO generated_articles
-                    (brand, reference, payload_json, intro_text, specs_text)
-                    VALUES (?, ?, ?, ?, ?)
+                    (brand, reference, payload_json, intro_text, specs_text, rewrite_depth, rewrite_parent_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
                     brand,
                     reference,
-                    payload_json_str,
+                    json.dumps(payload, ensure_ascii=False),
                     intro_text,
-                    specs_text
+                    specs_text,
+                    0,
+                    None
                 ))
-                saved_article_id = cur.lastrowid
                 conn_save.commit()
+                saved_article_id = cur.lastrowid
                 conn_save.close()
             except Exception as e:
                 flash(f'生成履歴の保存に失敗しました: {e}', 'error')
@@ -504,7 +653,7 @@ def staff_search():
                     overridden_fields.add(f)
 
             history_rows = conn.execute("""
-                SELECT id, intro_text, specs_text, payload_json, created_at
+                SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
                 FROM generated_articles
                 WHERE brand = ? AND reference = ?
                 ORDER BY created_at DESC, id DESC
@@ -512,6 +661,8 @@ def staff_search():
             """, (brand, reference)).fetchall()
             conn.close()
             history = _build_history_rows(history_rows)
+
+            mk, used, rem = get_quota_view()
 
             return render_template(
                 'search.html',
@@ -522,227 +673,101 @@ def staff_search():
                 override=override,
                 canonical=canonical,
                 overridden_fields=overridden_fields,
+
                 generated_intro_text=intro_text,
                 generated_specs_text=specs_text,
                 generation_tone=tone,
                 generation_include_brand_profile=include_brand_profile,
                 generation_include_wearing_scenes=include_wearing_scenes,
                 generation_reference_urls=reference_urls,
+
                 selected_reference_url=selected_reference_url,
                 selected_reference_reason=selected_reference_reason,
+
                 history=history,
                 combined_reference_chars=combined_reference_chars,
                 combined_reference_preview=combined_reference_preview,
                 reference_urls_debug=reference_urls_debug,
                 llm_client_file=llmc.__file__,
                 raw_urls_debug=(raw_urls if raw_urls else reference_urls),
+
                 similarity_percent=similarity_percent,
                 similarity_level=similarity_level,
+
                 saved_article_id=saved_article_id,
+                rewrite_depth=0,
+
+                plan_mode=PLAN_MODE,
+                monthly_limit=MONTHLY_LIMIT,
+                monthly_used=used,
+                monthly_remaining=rem,
+                month_key=mk,
             )
 
         # ----------------------------
-        # 言い換え再生成（任意1回）
-        # source_article_id の payload_json を読み、rewrite_mode="force" で生成
+        # Rewrite once (max 1 per source id)
         # ----------------------------
         if action == 'rewrite_once':
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
-            source_id = request.form.get('source_article_id', '').strip()
+            source_article_id = request.form.get('source_article_id', '').strip()
 
-            if not brand or not reference or not source_id:
-                flash('言い換え対象が見つかりません（ID不正）', 'error')
+            if not (brand and reference and source_article_id.isdigit()):
+                flash('言い換え対象が不正です', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             conn = get_db_connection()
-            row = conn.execute("SELECT payload_json FROM generated_articles WHERE id = ?", (source_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM generated_articles WHERE id = ?",
+                (int(source_article_id),)
+            ).fetchone()
+
             if not row:
                 conn.close()
                 flash('言い換え対象の履歴が見つかりません', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
+            payload = {}
             try:
-                payload = json.loads(row["payload_json"]) if row["payload_json"] else {}
+                payload = json.loads(row['payload_json']) if row['payload_json'] else {}
             except Exception:
                 payload = {}
+
+            # Server-side guard: same source id can be rewritten only once
+            already = conn.execute(
+                "SELECT 1 FROM generated_articles WHERE rewrite_parent_id = ? LIMIT 1",
+                (int(source_article_id),)
+            ).fetchone()
+            if already:
+                conn.close()
+                flash('この履歴は既に言い換え済みのため、再度の言い換えはできません（最大1回）', 'warning')
+                return redirect(url_for('staff_search', brand=brand, reference=reference))
+
+            # Prevent rewriting a rewritten record
+            src_depth = int(payload.get("rewrite_depth", 0) or 0)
+            if src_depth >= 1:
+                conn.close()
+                flash('この履歴は既に言い換え済みのため、再度の言い換えはできません（最大1回）', 'warning')
+                return redirect(url_for('staff_search', brand=brand, reference=reference))
+
+            ok, msg = consume_quota_or_block(n=1)
+            if not ok:
+                conn.close()
+                flash(msg, 'error')
+                return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             try:
                 intro_text, specs_text, ref_meta = llmc.generate_article(payload, rewrite_mode="force")
             except Exception as e:
                 conn.close()
-                flash(f'言い換え再生成に失敗しました: {e}', 'error')
+                app.logger.exception("LLM rewrite_once failed: %s", e)
+                flash(humanize_llm_error(e), 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
-            combined_reference_chars = int(ref_meta.get("combined_reference_chars", 0) or 0)
-            combined_reference_preview = ref_meta.get("combined_reference_preview", "") or ""
-            reference_urls_debug = ref_meta.get("reference_urls_debug", []) or []
-            selected_reference_url = ref_meta.get("selected_reference_url", "") or ""
-            selected_reference_reason = ref_meta.get("selected_reference_reason", "") or ""
+            payload["selected_reference_url"] = ref_meta.get("selected_reference_url", "")
+            payload["selected_reference_reason"] = ref_meta.get("selected_reference_reason", "")
+            payload["combined_reference_chars"] = ref_meta.get("combined_reference_chars", 0)
+            payload["combined_reference_preview"] = ref_meta.get("combined_reference_preview", "")
+            payload["reference_urls_debug"] = ref_meta.get("reference_urls_debug", [])
 
-            similarity_percent = int(ref_meta.get("similarity_percent", 0) or 0)
-            similarity_level = (ref_meta.get("similarity_level") or "blue").strip() or "blue"
-            rewrite_applied = bool(ref_meta.get("rewrite_applied", True))
-
-            payload["selected_reference_url"] = selected_reference_url
-            payload["selected_reference_reason"] = selected_reference_reason
-            payload["combined_reference_chars"] = combined_reference_chars
-            payload["combined_reference_preview"] = combined_reference_preview
-            payload["reference_urls_debug"] = reference_urls_debug
-            payload["similarity_percent"] = similarity_percent
-            payload["similarity_level"] = similarity_level
-            payload["rewrite_applied"] = rewrite_applied
-
-            payload_json_str = json.dumps(payload, ensure_ascii=False)
-
-            saved_article_id = None
-            try:
-                cur = conn.execute("""
-                    INSERT INTO generated_articles
-                    (brand, reference, payload_json, intro_text, specs_text)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    brand, reference, payload_json_str, intro_text, specs_text
-                ))
-                saved_article_id = cur.lastrowid
-                conn.commit()
-            except Exception as e:
-                conn.close()
-                flash(f'生成履歴の保存に失敗しました: {e}', 'error')
-                return redirect(url_for('staff_search', brand=brand, reference=reference))
-
-            master = conn.execute('''
-                SELECT * FROM master_products
-                WHERE brand = ? AND reference = ?
-            ''', (brand, reference)).fetchone()
-
-            override = conn.execute('''
-                SELECT * FROM product_overrides
-                WHERE brand = ? AND reference = ?
-            ''', (brand, reference)).fetchone()
-
-            canonical = {}
-            overridden_fields = set()
-            for f in fields:
-                ov = override[f] if override and override[f] else ''
-                ms = master[f] if master and master[f] else ''
-                canonical[f] = ov if ov else ms
-                if ov:
-                    overridden_fields.add(f)
-
-            history_rows = conn.execute("""
-                SELECT id, intro_text, specs_text, payload_json, created_at
-                FROM generated_articles
-                WHERE brand = ? AND reference = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT 5
-            """, (brand, reference)).fetchall()
-            conn.close()
-            history = _build_history_rows(history_rows)
-
-            return render_template(
-                'search.html',
-                brands=BRANDS,
-                brand=brand,
-                reference=reference,
-                master=master,
-                override=override,
-                canonical=canonical,
-                overridden_fields=overridden_fields,
-                generated_intro_text=intro_text,
-                generated_specs_text=specs_text,
-                generation_tone=(payload.get('style', {}) or {}).get('tone'),
-                generation_include_brand_profile=(payload.get('options', {}) or {}).get('include_brand_profile'),
-                generation_include_wearing_scenes=(payload.get('options', {}) or {}).get('include_wearing_scenes'),
-                selected_reference_url=selected_reference_url,
-                selected_reference_reason=selected_reference_reason,
-                history=history,
-                combined_reference_chars=combined_reference_chars,
-                combined_reference_preview=combined_reference_preview,
-                reference_urls_debug=reference_urls_debug,
-                llm_client_file=llmc.__file__,
-                raw_urls_debug=(payload.get("reference_urls") or []),
-                similarity_percent=similarity_percent,
-                similarity_level=similarity_level,
-                saved_article_id=saved_article_id,
-            )
-
-        if action == 'regenerate_from_history':
-            flash('履歴から再生成は現在停止中です（今は不要なため）', 'warning')
-            brand = request.form.get('brand', '').strip()
-            reference = request.form.get('reference', '').strip()
-            return redirect(url_for('staff_search', brand=brand, reference=reference))
-
-        flash('不明な操作です', 'error')
-        return redirect(url_for('staff_search'))
-
-    # GET
-    brand = request.args.get('brand', '').strip()
-    reference = request.args.get('reference', '').strip()
-
-    master = None
-    override = None
-    canonical = {}
-    overridden_fields = set()
-    warnings = []
-    override_warning = None
-    import_conflict_warning = None
-    history = []
-
-    if brand and reference:
-        conn = get_db_connection()
-
-        master = conn.execute('''
-            SELECT * FROM master_products
-            WHERE brand = ? AND reference = ?
-        ''', (brand, reference)).fetchone()
-
-        override = conn.execute('''
-            SELECT * FROM product_overrides
-            WHERE brand = ? AND reference = ?
-        ''', (brand, reference)).fetchone()
-
-        for f in fields:
-            ov = override[f] if override and override[f] else ''
-            ms = master[f] if master and master[f] else ''
-            canonical[f] = ov if ov else ms
-            if ov:
-                overridden_fields.add(f)
-
-        if not master:
-            warnings.append('商品マスタに存在しません。任意入力してください')
-        if not canonical.get('price_jpy'):
-            warnings.append('price_jpyがマスタとオーバーライドの両方で空です')
-
-        if override:
-            override_warning = 'この商品にはオーバーライドが設定されています'
-
-        history_rows = conn.execute("""
-            SELECT id, intro_text, specs_text, payload_json, created_at
-            FROM generated_articles
-            WHERE brand = ? AND reference = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT 5
-        """, (brand, reference)).fetchall()
-
-        conn.close()
-        history = _build_history_rows(history_rows)
-
-    return render_template(
-        'search.html',
-        brands=BRANDS,
-        brand=brand,
-        reference=reference,
-        master=master,
-        override=override,
-        canonical=canonical,
-        overridden_fields=overridden_fields,
-        warnings=warnings,
-        override_warning=override_warning,
-        import_conflict_warning=import_conflict_warning,
-        history=history,
-        **debug_defaults
-    )
-
-
-if __name__ == "__main__":
-    app.run(debug=False, use_reloader=False, port=5000)
+            similarity_percent = i

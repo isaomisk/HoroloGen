@@ -97,6 +97,8 @@ def init_db():
     _add_column_safe('master_uploads', 'override_conflict_count INTEGER DEFAULT 0')
     _add_column_safe('master_uploads', 'sample_diffs TEXT')
     _add_column_safe('product_overrides', 'editor_note TEXT')
+    _add_column_safe('generated_articles', 'rewrite_depth INTEGER DEFAULT 0')
+    _add_column_safe('generated_articles', 'rewrite_parent_id INTEGER')
 
     # generated_articles テーブル（記事生成履歴）
     cursor.execute("""
@@ -107,20 +109,12 @@ def init_db():
             payload_json TEXT NOT NULL,
             intro_text TEXT,
             specs_text TEXT,
+
+            -- ★追加：言い換えガード用
+            rewrite_depth INTEGER DEFAULT 0,
+            rewrite_parent_id INTEGER,
+
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_generated_articles_brand_ref_created
-        ON generated_articles (brand, reference, created_at DESC)
-    """)
-
-    conn.commit()
-    conn.close()
-
-def get_db_connection():
-    """データベース接続を取得"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    # monthly_generation_usage テーブル（月ごとの生成回数：サー�
