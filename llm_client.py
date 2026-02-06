@@ -889,4 +889,82 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
     specs = (data.get("specs_text") or "").strip()
 
     # specs_text 欠損時の保険：canonical から生成
-    if i
+    if intro and not specs:
+        facts = payload.get("facts", {}) or {}
+        facts_norm = _normalize_facts(facts)
+        specs = _specs_text_from_canonical(facts_norm).strip()
+
+    if not intro or not specs:
+        raise ValueError(f"Claudeのtool出力が不正です。keys={list(data.keys())} input={data}")
+
+    hits = validate_no_hype(intro)
+    if hits:
+        raise ValueError(f"煽り表現が検出されました: {hits}")
+
+    # 5) 類似度
+    sim_before = similarity_percent(intro, combined_reference_text)
+    lvl_before = similarity_level(sim_before)
+
+    # 6) 言い換え再生成（任意/自動/強制）
+    do_rewrite = False
+    if rewrite_mode == "force":
+        do_rewrite = True
+    elif rewrite_mode == "auto" and sim_before >= 35:
+        do_rewrite = True
+
+    sim_after = sim_before
+    lvl_after = lvl_before
+
+    if do_rewrite:
+        rewrite_system = system + "\n\n【言い換え再生成（重要）】\n- reference_url本文の表現の“言い回し”は流用しない\n- 構成と文のつながりを組み替え、同義の言い換えを徹底する\n- 固有名詞・型番・数値は保持する\n"
+
+        rewrite_user = user_prompt + f"""
+
+[追加指示：言い換え再生成]
+- 直前に作った intro_text のドラフトを渡すので、意味を保持しつつ大きく言い換えてください。
+- reference_url本文との表現重複を避けるため、言い回し・語順・段落構成を組み替えてください。
+- specs_text はテンプレの形式を維持してください（内容はcanonical_specs準拠）。
+
+[直前のintro_textドラフト]
+{intro}
+"""
+        data_r = _extract_once(rewrite_system, rewrite_user, temperature=0.4)
+        if not _is_valid_article_dict(data_r):
+            data_r2 = _extract_once(rewrite_system, rewrite_user, temperature=0.4)
+            if _is_valid_article_dict(data_r2):
+                data_r = data_r2
+
+        intro_r = (data_r.get("intro_text") or "").strip()
+        specs_r = (data_r.get("specs_text") or "").strip()
+
+        if intro_r:
+            intro = intro_r
+        if specs_r:
+            specs = specs_r
+
+        hits2 = validate_no_hype(intro)
+        if hits2:
+            raise ValueError(f"煽り表現が検出されました: {hits2}")
+
+        sim_after = similarity_percent(intro, combined_reference_text)
+        lvl_after = similarity_level(sim_after)
+
+    ref_meta = {
+        "selected_reference_url": chosen_url,
+        "selected_reference_reason": chosen_reason,
+        "selected_reference_chars": len(chosen_text or ""),
+        "combined_reference_chars": len(combined_reference_text or ""),
+        "combined_reference_preview": _safe_preview(combined_reference_text, 360),
+        "reference_urls_debug": per_url_debug,
+
+        # similarity (final)
+        "similarity_percent": int(sim_after),
+        "similarity_level": str(lvl_after),
+
+        # debug
+        "similarity_before_percent": int(sim_before),
+        "similarity_before_level": str(lvl_before),
+        "rewrite_applied": bool(do_rewrite),
+    }
+
+    return intro, specs, ref_meta

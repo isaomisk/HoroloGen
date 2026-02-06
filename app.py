@@ -770,4 +770,195 @@ def staff_search():
             payload["combined_reference_preview"] = ref_meta.get("combined_reference_preview", "")
             payload["reference_urls_debug"] = ref_meta.get("reference_urls_debug", [])
 
-            similarity_percent = i
+            similarity_percent = int(ref_meta.get("similarity_percent", 0) or 0)
+            similarity_level = (ref_meta.get("similarity_level", "blue") or "blue").strip()
+
+            payload["similarity_percent"] = similarity_percent
+            payload["similarity_level"] = similarity_level
+
+            payload["rewrite_applied"] = True
+            payload["rewrite_depth"] = 1
+            payload["rewrite_parent_id"] = int(source_article_id)
+
+            cur = conn.execute("""
+                INSERT INTO generated_articles
+                (brand, reference, payload_json, intro_text, specs_text, rewrite_depth, rewrite_parent_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                brand,
+                reference,
+                json.dumps(payload, ensure_ascii=False),
+                intro_text,
+                specs_text,
+                1,
+                int(source_article_id)
+            ))
+            conn.commit()
+            saved_article_id = cur.lastrowid
+
+            master = conn.execute('''
+                SELECT * FROM master_products
+                WHERE brand = ? AND reference = ?
+            ''', (brand, reference)).fetchone()
+
+            override = conn.execute('''
+                SELECT * FROM product_overrides
+                WHERE brand = ? AND reference = ?
+            ''', (brand, reference)).fetchone()
+
+            canonical = {}
+            overridden_fields = set()
+            for f in fields:
+                ov = override[f] if override and override[f] else ''
+                ms = master[f] if master and master[f] else ''
+                canonical[f] = ov if ov else ms
+                if ov:
+                    overridden_fields.add(f)
+
+            history_rows = conn.execute("""
+                SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
+                FROM generated_articles
+                WHERE brand = ? AND reference = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 5
+            """, (brand, reference)).fetchall()
+
+            conn.close()
+            history = _build_history_rows(history_rows)
+
+            mk, used, rem = get_quota_view()
+
+            return render_template(
+                'search.html',
+                brands=BRANDS,
+                brand=brand,
+                reference=reference,
+                master=master,
+                override=override,
+                canonical=canonical,
+                overridden_fields=overridden_fields,
+
+                generated_intro_text=intro_text,
+                generated_specs_text=specs_text,
+
+                generation_tone=(payload.get('style', {}) or {}).get('tone'),
+                generation_include_brand_profile=(payload.get('options', {}) or {}).get('include_brand_profile'),
+                generation_include_wearing_scenes=(payload.get('options', {}) or {}).get('include_wearing_scenes'),
+                generation_reference_urls=(payload.get("reference_urls") or []),
+
+                selected_reference_url=payload.get("selected_reference_url", ""),
+                selected_reference_reason=payload.get("selected_reference_reason", ""),
+
+                combined_reference_chars=payload.get("combined_reference_chars", 0),
+                combined_reference_preview=payload.get("combined_reference_preview", ""),
+                reference_urls_debug=payload.get("reference_urls_debug", []),
+
+                llm_client_file=llmc.__file__,
+                raw_urls_debug=(payload.get("reference_urls") or []),
+
+                similarity_percent=similarity_percent,
+                similarity_level=similarity_level,
+
+                saved_article_id=saved_article_id,
+                rewrite_depth=1,
+
+                plan_mode=PLAN_MODE,
+                monthly_limit=MONTHLY_LIMIT,
+                monthly_used=used,
+                monthly_remaining=rem,
+                month_key=mk,
+
+                history=history,
+            )
+
+        if action == 'regenerate_from_history':
+            flash('履歴から再生成は現在停止中です（今は不要なため）', 'warning')
+            brand = request.form.get('brand', '').strip()
+            reference = request.form.get('reference', '').strip()
+            return redirect(url_for('staff_search', brand=brand, reference=reference))
+
+        flash('不明な操作です', 'error')
+        return redirect(url_for('staff_search'))
+
+    # ----------------------------
+    # GET
+    # ----------------------------
+    mk, used, rem = get_quota_view()
+
+    brand = request.args.get('brand', '').strip()
+    reference = request.args.get('reference', '').strip()
+
+    master = None
+    override = None
+    canonical = {}
+    overridden_fields = set()
+    warnings = []
+    override_warning = None
+    import_conflict_warning = None
+    history = []
+
+    if brand and reference:
+        conn = get_db_connection()
+
+        master = conn.execute('''
+            SELECT * FROM master_products
+            WHERE brand = ? AND reference = ?
+        ''', (brand, reference)).fetchone()
+
+        override = conn.execute('''
+            SELECT * FROM product_overrides
+            WHERE brand = ? AND reference = ?
+        ''', (brand, reference)).fetchone()
+
+        for f in fields:
+            ov = override[f] if override and override[f] else ''
+            ms = master[f] if master and master[f] else ''
+            canonical[f] = ov if ov else ms
+            if ov:
+                overridden_fields.add(f)
+
+        if not master:
+            warnings.append('商品マスタに存在しません。任意入力してください')
+        if not canonical.get('price_jpy'):
+            warnings.append('price_jpyがマスタとオーバーライドの両方で空です')
+
+        if override:
+            override_warning = 'この商品にはオーバーライドが設定されています'
+
+        history_rows = conn.execute("""
+            SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
+            FROM generated_articles
+            WHERE brand = ? AND reference = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 5
+        """, (brand, reference)).fetchall()
+
+        conn.close()
+        history = _build_history_rows(history_rows)
+
+    return render_template(
+        'search.html',
+        brands=BRANDS,
+        brand=brand,
+        reference=reference,
+        master=master,
+        override=override,
+        canonical=canonical,
+        overridden_fields=overridden_fields,
+        warnings=warnings,
+        override_warning=override_warning,
+        import_conflict_warning=import_conflict_warning,
+        history=history,
+
+        plan_mode=PLAN_MODE,
+        monthly_limit=MONTHLY_LIMIT,
+        monthly_used=used,
+        monthly_remaining=rem,
+        month_key=mk,
+
+        **debug_defaults,
+    )
+
+
+if __name__ == "__main__":
+    app.run(debug=False, use_reloader=False, port=5000)

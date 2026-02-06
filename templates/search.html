@@ -370,4 +370,44 @@
 
       <div class="form-group">
         <label for="lug_width_mm">ラグ幅 (mm)</label>
-        <input type="text" id="lug_width_mm" name="lug_width_mm" value="{{ override.lug_width_mm if override else '' }}" placeho
+        <input type="text" id="lug_width_mm" name="lug_width_mm" value="{{ override.lug_width_mm if override else '' }}" placeholder="{{ master.lug_width_mm if master else '' }}">
+      </div>
+
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label for="remarks">備考</label>
+        <textarea id="remarks" name="remarks" rows="3">{{ override.remarks if override else '' }}</textarea>
+        {% if master and master.remarks %}
+        <small style="color: #666;">マスタ値: {{ master.remarks }}</small>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="form-group" style="grid-column: 1 / -1; margin-top: 15px;">
+      <label for="editor_note">スタッフ追加入力（必ず文章に反映されます）</label>
+      <textarea
+        id="editor_note"
+        name="editor_note"
+        rows="4"
+        placeholder="接客での実体験・商品の魅力・エピソードなどを自由に記載してください。">{{ override.editor_note if override and override.editor_note else '' }}</textarea>
+
+      <small style="color:#666;">
+        ※ここに入力した内容は、商品紹介文（intro）に必ず反映されます。
+      </small>
+    </div>
+
+    <button type="submit" style="margin-top: 20px;">オーバーライドを保存</button>
+  </form>
+{% endif %}
+
+<script>
+function copyToClipboard(elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.select();
+  el.setSelectionRange(0, 999999);
+  document.execCommand('copy');
+  alert('コピーしました');
+}
+</script>
+
+{% endblock %}
