@@ -154,7 +154,7 @@
         <span style="color:#666; font-size:12px;">（blue / yellow / red）</span>
       </div>
 
-      {% if saved_article_id %}
+      {% if saved_article_id and (rewrite_depth|default(0) == 0) %}
         <form method="POST" style="margin-top:10px;">
           <input type="hidden" name="action" value="rewrite_once">
           <input type="hidden" name="brand" value="{{ brand }}">
@@ -162,15 +162,14 @@
           <input type="hidden" name="source_article_id" value="{{ saved_article_id }}">
           <button type="submit">言い換え再生成（1回）</button>
           <small style="color:#666; display:block; margin-top:6px;">
-            ※必要なときだけ押してください（最大1回）<br>
-            ※類似度が低くても押せます。生成結果は履歴に追加保存されます。
+            ※必要なときだけ押してください（最大1回）
           </small>
         </form>
       {% else %}
         <div style="color:#666; font-size:12px; margin-top:8px;">
-          ※履歴保存に失敗しているため、言い換え再生成は使えません。
+          ※この文章は言い換え済みのため、再度の言い換えはできません（最大1回）
         </div>
-      {% endif %}
+      {% endif %}    
     </div>
 
     <div class="form-group">

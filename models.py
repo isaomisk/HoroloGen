@@ -1,6 +1,5 @@
 import sqlite3
 import os
-from datetime import datetime
 
 DB_PATH = '/Users/misaki/Desktop/HoroloGen/horologen.db'
 
@@ -43,7 +42,7 @@ def init_db():
         )
     ''')
 
-    # product_overrides テーブル
+    # product_overrides テーブル（editor_note 追加）
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS product_overrides (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,6 +62,7 @@ def init_db():
             case_thickness_mm TEXT,
             lug_width_mm TEXT,
             remarks TEXT,
+            editor_note TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(brand, reference)
@@ -86,21 +86,17 @@ def init_db():
         )
     ''')
 
-    # 既存のテーブルに新しいカラムを追加（存在しない場合のみ）
-    try:
-        cursor.execute('ALTER TABLE master_uploads ADD COLUMN changed_count INTEGER DEFAULT 0')
-    except sqlite3.OperationalError:
-        pass  # カラムが既に存在する場合はスキップ
+    # 既存テーブルへカラム追加（存在しない場合のみ）
+    def _add_column_safe(table: str, coldef: str):
+        try:
+            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {coldef}')
+        except sqlite3.OperationalError:
+            pass
 
-    try:
-        cursor.execute('ALTER TABLE master_uploads ADD COLUMN override_conflict_count INTEGER DEFAULT 0')
-    except sqlite3.OperationalError:
-        pass  # カラムが既に存在する場合はスキップ
-
-    try:
-        cursor.execute('ALTER TABLE master_uploads ADD COLUMN sample_diffs TEXT')
-    except sqlite3.OperationalError:
-        pass  # カラムが既に存在する場合はスキップ
+    _add_column_safe('master_uploads', 'changed_count INTEGER DEFAULT 0')
+    _add_column_safe('master_uploads', 'override_conflict_count INTEGER DEFAULT 0')
+    _add_column_safe('master_uploads', 'sample_diffs TEXT')
+    _add_column_safe('product_overrides', 'editor_note TEXT')
 
     # generated_articles テーブル（記事生成履歴）
     cursor.execute("""
