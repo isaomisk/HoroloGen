@@ -117,26 +117,4 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # monthly_generation_usage テーブル（月ごとの生成回数：サービス全体）
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS monthly_generation_usage (
-            month_key TEXT PRIMARY KEY,      -- 例: "2026-02"
-            used_count INTEGER DEFAULT 0,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_generated_articles_brand_ref_created
-        ON generated_articles (brand, reference, created_at DESC)
-    """)
-
-    conn.commit()
-    conn.close()
-
-def get_db_connection():
-    """データベース接続を取得"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    # monthly_generation_usage テーブル（月ごとの生成回数：サー�

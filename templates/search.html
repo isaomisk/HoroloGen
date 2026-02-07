@@ -81,14 +81,23 @@
     {% endif %}
   </div>
 
+  {% set locked = (generated_intro_text or generated_specs_text) %}
   <form method="POST" style="margin-bottom: 30px;">
     <input type="hidden" name="action" value="generate_dummy">
     <input type="hidden" name="brand" value="{{ brand }}">
     <input type="hidden" name="reference" value="{{ reference }}">
+    {% if locked %}
+      <input type="hidden" name="tone" value="{{ generation_tone if generation_tone else 'casual_friendly' }}">
+      <input type="hidden" name="include_brand_profile" value="{{ 'on' if generation_include_brand_profile else 'off' }}">
+      <input type="hidden" name="include_wearing_scenes" value="{{ 'on' if generation_include_wearing_scenes else 'off' }}">
+      <input type="hidden" name="reference_url_1" value="{{ generation_reference_urls[0] if generation_reference_urls and generation_reference_urls|length > 0 else '' }}">
+      <input type="hidden" name="reference_url_2" value="{{ generation_reference_urls[1] if generation_reference_urls and generation_reference_urls|length > 1 else '' }}">
+      <input type="hidden" name="reference_url_3" value="{{ generation_reference_urls[2] if generation_reference_urls and generation_reference_urls|length > 2 else '' }}">
+    {% endif %}
 
     <div class="form-group">
       <label for="tone">トーン</label>
-      <select id="tone" name="tone" required>
+      <select id="tone" name="tone" required {% if locked %}disabled{% endif %}>
         <option value="luxury" {% if generation_tone == 'luxury' %}selected{% endif %}>フォーマル・権威型（luxury）</option>
         <option value="casual_friendly" {% if generation_tone == 'casual_friendly' or not generation_tone %}selected{% endif %}>カジュアル・親しみ型（casual_friendly）</option>
         <option value="magazine_story" {% if generation_tone == 'magazine_story' %}selected{% endif %}>ストーリー型（magazine_story）</option>
@@ -98,14 +107,14 @@
 
     <div class="form-group">
       <label>
-        <input type="checkbox" name="include_brand_profile" {% if generation_include_brand_profile %}checked{% endif %}>
+        <input type="checkbox" name="include_brand_profile" {% if generation_include_brand_profile %}checked{% endif %} {% if locked %}disabled{% endif %}>
         ブランドプロフィールを含める
       </label>
     </div>
 
     <div class="form-group">
       <label>
-        <input type="checkbox" name="include_wearing_scenes" {% if generation_include_wearing_scenes %}checked{% endif %}>
+        <input type="checkbox" name="include_wearing_scenes" {% if generation_include_wearing_scenes %}checked{% endif %} {% if locked %}disabled{% endif %}>
         装着シーンを含める
       </label>
     </div>
@@ -119,6 +128,7 @@
         value="{{ generation_reference_urls[0] if generation_reference_urls and generation_reference_urls|length > 0 else '' }}"
         placeholder="参考URL 1（推奨）: https://..."
         style="width: 100%; margin-bottom: 8px;"
+        {% if locked %}disabled{% endif %}
       >
 
       <input
@@ -127,6 +137,7 @@
         value="{{ generation_reference_urls[1] if generation_reference_urls and generation_reference_urls|length > 1 else '' }}"
         placeholder="参考URL 2（任意）: https://..."
         style="width: 100%; margin-bottom: 8px;"
+        {% if locked %}disabled{% endif %}
       >
 
       <input
@@ -135,6 +146,7 @@
         value="{{ generation_reference_urls[2] if generation_reference_urls and generation_reference_urls|length > 2 else '' }}"
         placeholder="参考URL 3（任意）: https://..."
         style="width: 100%;"
+        {% if locked %}disabled{% endif %}
       >
 
       <small style="color:#666;">
