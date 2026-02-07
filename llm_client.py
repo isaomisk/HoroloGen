@@ -649,20 +649,36 @@ def _extract_json_object_from_text(txt: str) -> Dict[str, Any]:
 def _pick_tool_input(message) -> Dict[str, Any]:
     """
     Anthropic SDKの返却が
-    - オブジェクト形式 (b.type, b.input)
-    - dict形式 (b["type"], b["input"])
+    - オブジェクト形式 (b.type, b.input, b.name)
+    - dict形式 (b["type"], b["input"], b["name"])
     のどちらでも拾えるようにする
+
+    さらに tool名が "return_article" のものを優先して拾う。
     """
     blocks = getattr(message, "content", None) or []
+
+    # 1) まず "return_article" を優先して探す
     for b in blocks:
         # dict形式
+        if isinstance(b, dict):
+            if b.get("type") == "tool_use" and b.get("name") == "return_article":
+                data = b.get("input") or {}
+                return data if isinstance(data, dict) else {}
+            continue
+
+        # オブジェクト形式
+        if getattr(b, "type", None) == "tool_use" and getattr(b, "name", None) == "return_article":
+            data = getattr(b, "input", None) or {}
+            return data if isinstance(data, dict) else {}
+
+    # 2) fallback: どれでもいいので最初の tool_use を拾う
+    for b in blocks:
         if isinstance(b, dict):
             if b.get("type") == "tool_use":
                 data = b.get("input") or {}
                 return data if isinstance(data, dict) else {}
             continue
 
-        # オブジェクト形式
         if getattr(b, "type", None) == "tool_use":
             data = getattr(b, "input", None) or {}
             return data if isinstance(data, dict) else {}
@@ -836,7 +852,7 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
     def _call_claude(sys_text: str, u_prompt: str, temperature: float = 0.3):
         return client.messages.create(
             model=MODEL,
-            max_tokens=1700,
+            max_tokens=2300,
             temperature=temperature,
             system=sys_text,
             messages=[{"role": "user", "content": u_prompt}],
@@ -847,9 +863,30 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
     def _extract_once(sys_text: str, u_prompt: str, temperature: float = 0.3) -> Dict[str, Any]:
         # 1) tools を使って通常実行
         msg = _call_claude(sys_text, u_prompt, temperature=temperature)
+        print(f"[HoroloGen] MODEL={MODEL}")
         data = _pick_tool_input(msg)
         if isinstance(data, dict) and data:
             return data
+
+        # LOG: tool_use が無い/空の場合の診断ログ（原因追跡用）
+        if not data:
+            try:
+                blocks = getattr(msg, "content", None) or []
+                types = []
+                tool_names = []
+                for b in blocks:
+                    if isinstance(b, dict):
+                        types.append(b.get("type"))
+                        if b.get("type") == "tool_use":
+                            tool_names.append(b.get("name"))
+                    else:
+                        types.append(getattr(b, "type", None))
+                        if getattr(b, "type", None) == "tool_use":
+                            tool_names.append(getattr(b, "name", None))
+                preview = (_message_text(msg) or "")[:500]
+                print(f"[HoroloGen] WARN: tool_use missing/empty. stop_reason={getattr(msg,'stop_reason',None)} content_types={types} tool_names={tool_names} text_preview={preview}")
+            except Exception:
+                pass
 
         # 2) tool_use が無い場合：textからJSONを拾う保険
         txt = _message_text(msg)
@@ -863,7 +900,7 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
         try:
             msg2 = client.messages.create(
                 model=MODEL,
-                max_tokens=1700,
+                max_tokens=2300,
                 temperature=temperature,
                 system=sys2,
                 messages=[{"role": "user", "content": u2}],
