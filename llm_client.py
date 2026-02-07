@@ -2,7 +2,6 @@ import json
 import os
 import re
 import requests
-from datetime import datetime
 from bs4 import BeautifulSoup
 from anthropic import Anthropic
 
@@ -222,7 +221,6 @@ TRUST_SOURCES: Dict[str, Dict[str, Any]] = {
     "eye-eye-isuzu.co.jp": {"category": "B", "allowed_use": ["context"]},
     "rasin.co.jp": {"category": "B", "allowed_use": ["context"]},
     "evance.co.jp": {"category": "B", "allowed_use": ["context"]},
-    "hrd-web.com": {"category": "B", "allowed_use": ["context"]},
 
     # C: 時計専門メディア
     "webchronos.net": {"category": "C", "allowed_use": ["context", "opinion"]},
@@ -234,9 +232,6 @@ TRUST_SOURCES: Dict[str, Dict[str, Any]] = {
     "revolutionwatch.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "swisswatches-magazine.com": {"category": "C", "allowed_use": ["context", "opinion"]},
     "wornandwound.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "oracleoftime.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "watches-news.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "deployant.com": {"category": "C", "allowed_use": ["context", "opinion"]},
 
     # D: マーケット系（用途限定）
     "chrono24.com": {"category": "D", "allowed_use": ["market", "context"]},
@@ -698,62 +693,6 @@ def _is_valid_article_dict(d: Dict[str, Any]) -> bool:
     return bool(it) and bool(st)
 
 
-def _extract_usage(msg) -> Optional[Dict[str, Any]]:
-    """Return usage safely across SDK variants. Never raise."""
-    try:
-        usage_obj = msg.get("usage") if isinstance(msg, dict) else getattr(msg, "usage", None)
-
-        def _get_value(obj, keys):
-            if obj is None:
-                return None
-            if isinstance(obj, dict):
-                for k in keys:
-                    if k in obj:
-                        return obj.get(k)
-                return None
-            for k in keys:
-                if hasattr(obj, k):
-                    return getattr(obj, k, None)
-            return None
-
-        input_tokens = _get_value(usage_obj, ("input_tokens", "prompt_tokens"))
-        output_tokens = _get_value(usage_obj, ("output_tokens", "completion_tokens"))
-        model = msg.get("model") if isinstance(msg, dict) else getattr(msg, "model", None)
-
-        if input_tokens is None and output_tokens is None and model is None:
-            return None
-        return {"input_tokens": input_tokens, "output_tokens": output_tokens, "model": model}
-    except Exception:
-        return None
-
-
-def _append_usage_event(usage_events: List[Dict[str, Any]], msg, label: str) -> None:
-    usage = _extract_usage(msg)
-    input_tokens = None
-    output_tokens = None
-    model = None
-    if usage:
-        try:
-            input_tokens = int(usage.get("input_tokens")) if usage.get("input_tokens") is not None else None
-        except Exception:
-            input_tokens = None
-        try:
-            output_tokens = int(usage.get("output_tokens")) if usage.get("output_tokens") is not None else None
-        except Exception:
-            output_tokens = None
-        model = usage.get("model")
-
-    usage_events.append(
-        {
-            "label": label,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "model": str(model) if model is not None else None,
-            "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-        }
-    )
-
-
 # ----------------------------
 # Similarity (language-agnostic char n-gram Jaccard)
 # ----------------------------
@@ -797,7 +736,6 @@ def similarity_level(pct: int) -> str:
 #   "auto"  : 類似が高いときだけ1回だけ言い換え
 # ----------------------------
 def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, str, Dict[str, Any]]:
-    usage_events: List[Dict[str, Any]] = []
     product = payload.get("product", {}) or {}
     ref_code = (product.get("reference") or "").strip()
 
@@ -911,8 +849,8 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
     system = build_system(tone, has_reference_text=has_ref)
     user_prompt = build_user_prompt(payload, combined_reference_text)
 
-    def _call_claude(sys_text: str, u_prompt: str, temperature: float = 0.3, label: str = "gen.tools"):
-        msg = client.messages.create(
+    def _call_claude(sys_text: str, u_prompt: str, temperature: float = 0.3):
+        return client.messages.create(
             model=MODEL,
             max_tokens=2300,
             temperature=temperature,
@@ -921,17 +859,10 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
             tools=[ARTICLE_TOOL],
             tool_choice={"type": "tool", "name": "return_article"},
         )
-        _append_usage_event(usage_events, msg, label)
-        return msg
 
-    def _extract_once(sys_text: str, u_prompt: str, temperature: float = 0.3, label_prefix: str = "gen", attempt: int = 1) -> Dict[str, Any]:
+    def _extract_once(sys_text: str, u_prompt: str, temperature: float = 0.3) -> Dict[str, Any]:
         # 1) tools を使って通常実行
-        msg = _call_claude(
-            sys_text,
-            u_prompt,
-            temperature=temperature,
-            label=f"{label_prefix}.tools.{attempt}",
-        )
+        msg = _call_claude(sys_text, u_prompt, temperature=temperature)
         print(f"[HoroloGen] MODEL={MODEL}")
         data = _pick_tool_input(msg)
         if isinstance(data, dict) and data:
@@ -974,7 +905,6 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
                 system=sys2,
                 messages=[{"role": "user", "content": u2}],
             )
-            _append_usage_event(usage_events, msg2, f"{label_prefix}.no_tools_retry.{attempt}")
             txt2 = _message_text(msg2)
             data3 = _extract_json_object_from_text(txt2)
             if _is_valid_article_dict(data3):
@@ -986,9 +916,9 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
         return {}
 
     # 4) 通常生成（tool不正に備えて最大2回）
-    data = _extract_once(system, user_prompt, temperature=0.3, label_prefix="gen", attempt=1)
+    data = _extract_once(system, user_prompt, temperature=0.3)
     if not _is_valid_article_dict(data):
-        data2 = _extract_once(system, user_prompt, temperature=0.3, label_prefix="gen", attempt=2)
+        data2 = _extract_once(system, user_prompt, temperature=0.3)
         if _is_valid_article_dict(data2):
             data = data2
 
@@ -1035,9 +965,9 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
 [直前のintro_textドラフト]
 {intro}
 """
-        data_r = _extract_once(rewrite_system, rewrite_user, temperature=0.4, label_prefix="rewrite", attempt=1)
+        data_r = _extract_once(rewrite_system, rewrite_user, temperature=0.4)
         if not _is_valid_article_dict(data_r):
-            data_r2 = _extract_once(rewrite_system, rewrite_user, temperature=0.4, label_prefix="rewrite", attempt=2)
+            data_r2 = _extract_once(rewrite_system, rewrite_user, temperature=0.4)
             if _is_valid_article_dict(data_r2):
                 data_r = data_r2
 
@@ -1072,11 +1002,6 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
         "similarity_before_percent": int(sim_before),
         "similarity_before_level": str(lvl_before),
         "rewrite_applied": bool(do_rewrite),
-        "usage_events": usage_events,
     }
-
-    sum_input = sum((e.get("input_tokens") or 0) for e in usage_events)
-    sum_output = sum((e.get("output_tokens") or 0) for e in usage_events)
-    print(f"[HoroloGen] USAGE calls={len(usage_events)} input_tokens={sum_input} output_tokens={sum_output}")
 
     return intro, specs, ref_meta

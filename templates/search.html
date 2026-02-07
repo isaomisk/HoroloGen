@@ -12,7 +12,7 @@
     <select id="brand" name="brand" required>
       <option value="">選択してください</option>
       {% for b in brands %}
-      <option value="{{ b.brand_key }}" {% if (brand|default('')|lower) == b.brand_key %}selected{% endif %}>{{ b.display_brand }}</option>
+      <option value="{{ b }}" {% if brand == b %}selected{% endif %}>{{ b }}</option>
       {% endfor %}
     </select>
   </div>
