@@ -30,38 +30,6 @@ BRANDS = ['cartier', 'omega', 'grand_seiko', 'iwc', 'panerai']
 
 
 # ----------------------------
-# User-facing error messages (single source of truth)
-# ----------------------------
-ERROR_MESSAGES = {
-    "file_not_selected": "ファイルが選択されていません",
-    "csv_file_only": "CSVファイルを選択してください",
-    "csv_empty": "CSVファイルが空です",
-    "csv_missing_columns": "必須カラムが不足しています: {columns}",
-    "csv_extra_columns": "不正なカラムが含まれています: {columns}。インポートを停止します。",
-    "csv_import_failed": "CSV取込中にエラーが発生しました。",
-    "brand_reference_required": "ブランドとリファレンスを入力してください",
-    "quota_limit": "今月の生成回数の上限に達しました。管理者にお問い合わせください。",
-    "system_error": "システム側でエラーが発生しました。管理者にお問い合わせください。",
-    "llm_rate": "アクセスが集中しています。少し時間を置いてから再度お試しください。",
-    "llm_auth": "認証エラーが発生しました。管理者にお問い合わせください。",
-    "llm_network": "通信が不安定です。時間を置いてから再度お試しください。",
-    "llm_unknown": "エラーが発生しました。管理者にお問い合わせください。",
-    "history_save_failed": "生成履歴の保存に失敗しました。",
-    "rewrite_invalid_target": "言い換え対象が不正です",
-    "rewrite_not_found": "言い換え対象の履歴が見つかりません",
-    "unknown_action": "不明な操作です",
-}
-
-
-def user_error_message(key: str, **kwargs) -> str:
-    template = ERROR_MESSAGES.get(key, ERROR_MESSAGES["llm_unknown"])
-    try:
-        return template.format(**kwargs)
-    except Exception:
-        return template
-
-
-# ----------------------------
 # Error humanizer (public message) + log detail
 # ----------------------------
 def humanize_llm_error(e: Exception) -> str:
@@ -69,15 +37,15 @@ def humanize_llm_error(e: Exception) -> str:
     m = msg.lower()
 
     if "credit balance is too low" in m or "plans & billing" in m:
-        return user_error_message("quota_limit")
+        return "使用上限に達しました。管理者にお問い合わせください。"
     if "rate limit" in m or "too many requests" in m:
-        return user_error_message("llm_rate")
+        return "アクセスが集中しています。少し時間を置いてから再度お試しください。"
     if "api key" in m or "authentication" in m or "unauthorized" in m:
-        return user_error_message("llm_auth")
+        return "認証エラーが発生しました。管理者にお問い合わせください。"
     if "timeout" in m or "timed out" in m or "connection" in m:
-        return user_error_message("llm_network")
+        return "通信が不安定です。時間を置いてから再度お試しください。"
 
-    return user_error_message("llm_unknown")
+    return "エラーが発生しました。管理者にお問い合わせください。"
 
 
 # ----------------------------
@@ -123,7 +91,7 @@ def consume_quota_or_block(n: int = 1) -> tuple[bool, str]:
 
         if used + n > MONTHLY_LIMIT:
             conn.rollback()
-            return False, user_error_message("quota_limit")
+            return False, "今月の生成回数の上限に達しました。管理者にお問い合わせください。"
 
         if row:
             conn.execute(
@@ -146,7 +114,7 @@ def consume_quota_or_block(n: int = 1) -> tuple[bool, str]:
         except Exception:
             pass
         app.logger.exception("quota check/update failed: %s", e)
-        return False, user_error_message("system_error")
+        return False, "システム側でエラーが発生しました。管理者にお問い合わせください。"
     finally:
         try:
             conn.close()
@@ -230,11 +198,11 @@ def admin_upload():
         file = request.files.get('csv_file')
 
         if not file or file.filename == '':
-            flash(user_error_message("file_not_selected"), 'error')
+            flash('ファイルが選択されていません', 'error')
             return redirect(url_for('admin_upload'))
 
         if not file.filename.endswith('.csv'):
-            flash(user_error_message("csv_file_only"), 'error')
+            flash('CSVファイルを選択してください', 'error')
             return redirect(url_for('admin_upload'))
 
         conn = None
@@ -246,19 +214,19 @@ def admin_upload():
 
             csv_columns = reader.fieldnames
             if csv_columns is None:
-                flash(user_error_message("csv_empty"), 'error')
+                flash('CSVファイルが空です', 'error')
                 return redirect(url_for('admin_upload'))
 
             csv_columns = [col.strip() for col in csv_columns]
 
             missing_columns = set(REQUIRED_CSV_COLUMNS) - set(csv_columns)
             if missing_columns:
-                flash(user_error_message("csv_missing_columns", columns=", ".join(sorted(missing_columns))), 'error')
+                flash(f'必須カラムが不足しています: {", ".join(sorted(missing_columns))}', 'error')
                 return redirect(url_for('admin_upload'))
 
             extra_columns = set(csv_columns) - set(REQUIRED_CSV_COLUMNS)
             if extra_columns:
-                flash(user_error_message("csv_extra_columns", columns=", ".join(sorted(extra_columns))), 'error')
+                flash(f'不正なカラムが含まれています: {", ".join(sorted(extra_columns))}。インポートを停止します。', 'error')
                 return redirect(url_for('admin_upload'))
 
             conn = get_db_connection()
@@ -399,8 +367,7 @@ def admin_upload():
                 flash(f'エラー詳細: {"; ".join(error_details[:5])}', 'warning')
 
         except Exception as e:
-            app.logger.exception("CSV import failed: %s", e)
-            flash(user_error_message("csv_import_failed"), 'error')
+            flash(f'CSV取込中にエラーが発生しました: {e}', 'error')
         finally:
             try:
                 if conn:
@@ -524,7 +491,7 @@ def staff_search():
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
             if not brand or not reference:
-                flash(user_error_message("brand_reference_required"), 'error')
+                flash('ブランドとリファレンスを入力してください', 'error')
                 return redirect(url_for('staff_search'))
 
             conn = get_db_connection()
@@ -545,7 +512,7 @@ def staff_search():
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
             if not brand or not reference:
-                flash(user_error_message("brand_reference_required"), 'error')
+                flash('ブランドとリファレンスを入力してください', 'error')
                 return redirect(url_for('staff_search'))
 
             raw_urls = [
@@ -663,8 +630,7 @@ def staff_search():
                 saved_article_id = cur.lastrowid
                 conn_save.close()
             except Exception as e:
-                app.logger.exception("Saving generated article failed: %s", e)
-                flash(user_error_message("history_save_failed"), 'error')
+                flash(f'生成履歴の保存に失敗しました: {e}', 'error')
 
             conn = get_db_connection()
             master = conn.execute('''
@@ -747,7 +713,7 @@ def staff_search():
             source_article_id = request.form.get('source_article_id', '').strip()
 
             if not (brand and reference and source_article_id.isdigit()):
-                flash(user_error_message("rewrite_invalid_target"), 'error')
+                flash('言い換え対象が不正です', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             conn = get_db_connection()
@@ -758,7 +724,7 @@ def staff_search():
 
             if not row:
                 conn.close()
-                flash(user_error_message("rewrite_not_found"), 'error')
+                flash('言い換え対象の履歴が見つかりません', 'error')
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             payload = {}
@@ -911,7 +877,7 @@ def staff_search():
             reference = request.form.get('reference', '').strip()
             return redirect(url_for('staff_search', brand=brand, reference=reference))
 
-        flash(user_error_message("unknown_action"), 'error')
+        flash('不明な操作です', 'error')
         return redirect(url_for('staff_search'))
 
     # ----------------------------
@@ -949,4 +915,50 @@ def staff_search():
             ms = master[f] if master and master[f] else ''
             canonical[f] = ov if ov else ms
             if ov:
-     
+                overridden_fields.add(f)
+
+        if not master:
+            warnings.append('商品マスタに存在しません。任意入力してください')
+        if not canonical.get('price_jpy'):
+            warnings.append('price_jpyがマスタとオーバーライドの両方で空です')
+
+        if override:
+            override_warning = 'この商品にはオーバーライドが設定されています'
+
+        history_rows = conn.execute("""
+            SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
+            FROM generated_articles
+            WHERE brand = ? AND reference = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 5
+        """, (brand, reference)).fetchall()
+
+        conn.close()
+        history = _build_history_rows(history_rows)
+
+    return render_template(
+        'search.html',
+        brands=BRANDS,
+        brand=brand,
+        reference=reference,
+        master=master,
+        override=override,
+        canonical=canonical,
+        overridden_fields=overridden_fields,
+        warnings=warnings,
+        override_warning=override_warning,
+        import_conflict_warning=import_conflict_warning,
+        history=history,
+
+        plan_mode=PLAN_MODE,
+        monthly_limit=MONTHLY_LIMIT,
+        monthly_used=used,
+        monthly_remaining=rem,
+        month_key=mk,
+
+        **debug_defaults,
+    )
+
+
+if __name__ == "__main__":
+    app.run(debug=False, use_reloader=False, port=5000)
