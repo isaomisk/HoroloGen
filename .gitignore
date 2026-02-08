@@ -21,3 +21,13 @@ logs/
 # macOS
 .DS_Store
 名称未設定4.txt
+
+# local env/db
+.venv/
+horologen.db
+horologen.db.malformed
+
+# local env/db
+.venv/
+horologen.db
+horologen.db.malformed
