@@ -1,6 +1,5 @@
 import os
 import sqlite3
-import os
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "horologen.db")
 
@@ -133,6 +132,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_generated_articles_brand_ref_created
         ON generated_articles (brand, reference, created_at DESC)
     """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_master_products_brand_reference
+        ON master_products (brand, reference)
+    """)
 
     conn.commit()
     conn.close()
@@ -142,3 +145,35 @@ def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def get_references_by_brand(brand: str) -> tuple[int, list[str]]:
+    if not brand:
+        return 0, []
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        item_rows = conn.execute(
+            '''
+            SELECT DISTINCT reference
+            FROM master_products
+            WHERE brand = ?
+            ORDER BY reference ASC
+            LIMIT 3000
+            ''',
+            (brand,)
+        ).fetchall()
+        count_row = conn.execute(
+            '''
+            SELECT COUNT(DISTINCT reference) AS ref_count
+            FROM master_products
+            WHERE brand = ?
+            ''',
+            (brand,)
+        ).fetchone()
+
+        items = [row[0] for row in item_rows if row and row[0] is not None]
+        count = int(count_row[0]) if count_row else 0
+        return count, items
+    finally:
+        conn.close()

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 import json
 import csv
 import io
@@ -7,7 +7,7 @@ import binascii
 import sqlite3
 from datetime import datetime, timedelta
 
-from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS
+from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS, get_references_by_brand
 import llm_client as llmc
 from url_discovery import discover_reference_urls
 from errors import make_error_id, to_user_message, log_exception
@@ -390,6 +390,16 @@ def admin_upload():
 
     conn.close()
     return render_template('admin.html', latest_upload=latest_upload, sample_diffs=sample_diffs)
+
+
+@app.route('/staff/references', methods=['GET'])
+def staff_references():
+    brand = request.args.get('brand', '').strip()
+    if not brand:
+        return jsonify({"brand": "", "count": 0, "items": []})
+
+    count, items = get_references_by_brand(brand)
+    return jsonify({"brand": brand, "count": count, "items": items})
 
 
 @app.route('/staff/search', methods=['GET', 'POST'])
