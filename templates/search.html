@@ -18,8 +18,11 @@
   </div>
 
   <div class="form-group">
+    <div id="ref_count">登録数: -</div>
     <label for="reference">リファレンス</label>
-    <input type="text" id="reference" name="reference" value="{{ reference or '' }}" required>
+    <input type="text" id="reference" name="reference" list="reference_list" value="{{ reference or '' }}" required>
+    <datalist id="reference_list"></datalist>
+    <span id="ref_loading" style="display:none;">読み込み中…</span>
   </div>
 
   <button type="submit">検索</button>
