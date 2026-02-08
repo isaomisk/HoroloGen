@@ -7,7 +7,7 @@ import binascii
 import sqlite3
 from datetime import datetime, timedelta
 
-from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS, get_references_by_brand
+from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS, get_references_by_brand, get_brands
 import llm_client as llmc
 from url_discovery import discover_reference_urls
 from errors import make_error_id, to_user_message, log_exception
@@ -433,7 +433,7 @@ def staff_search():
                 mk, used, rem = get_quota_view()
                 return render_template(
                     'search.html',
-                    brands=BRANDS,
+                    brands=get_brands(),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
                     **debug_defaults
                 )
@@ -446,7 +446,7 @@ def staff_search():
                 mk, used, rem = get_quota_view()
                 return render_template(
                     'search.html',
-                    brands=BRANDS,
+                    brands=get_brands(),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
                     **debug_defaults
                 )
@@ -673,7 +673,7 @@ def staff_search():
 
             return render_template(
                 'search.html',
-                brands=BRANDS,
+                brands=get_brands(),
                 brand=brand,
                 reference=reference,
                 master=master,
@@ -836,7 +836,7 @@ def staff_search():
 
             return render_template(
                 'search.html',
-                brands=BRANDS,
+                brands=get_brands(),
                 brand=brand,
                 reference=reference,
                 master=master,
@@ -944,7 +944,7 @@ def staff_search():
 
     return render_template(
         'search.html',
-        brands=BRANDS,
+        brands=get_brands(),
         brand=brand,
         reference=reference,
         master=master,

@@ -425,4 +425,92 @@ function copyToClipboard(elementId) {
 }
 </script>
 
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const brandSelect = document.getElementById('brand');
+  const referenceInput = document.getElementById('reference');
+  const referenceList = document.getElementById('reference_list');
+  const refCount = document.getElementById('ref_count');
+  const refLoading = document.getElementById('ref_loading');
+
+  if (!brandSelect || !referenceInput || !referenceList || !refCount || !refLoading) {
+    return;
+  }
+
+  const refCache = new Map();
+  let requestId = 0;
+
+  function clearOptions() {
+    referenceList.innerHTML = '';
+  }
+
+  function applyOptions(items) {
+    clearOptions();
+    for (const ref of items) {
+      const option = document.createElement('option');
+      option.value = ref;
+      referenceList.appendChild(option);
+    }
+  }
+
+  function setIdleState() {
+    referenceInput.disabled = false;
+    refLoading.style.display = 'none';
+  }
+
+  async function updateReferences() {
+    const brand = (brandSelect.value || '').trim();
+    const currentRequest = ++requestId;
+
+    if (!brand) {
+      clearOptions();
+      refCount.textContent = '登録数: 0件';
+      setIdleState();
+      return;
+    }
+
+    if (refCache.has(brand)) {
+      const cached = refCache.get(brand);
+      applyOptions(cached.items);
+      refCount.textContent = `登録数: ${cached.count}件`;
+      setIdleState();
+      return;
+    }
+
+    referenceInput.disabled = true;
+    refLoading.style.display = 'inline';
+    refCount.textContent = '登録数: 読み込み中…';
+
+    try {
+      const res = await fetch(`/staff/references?brand=${encodeURIComponent(brand)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      if (currentRequest !== requestId) return;
+
+      const items = Array.isArray(data.items) ? data.items : [];
+      const count = Number.isFinite(Number(data.count)) ? Number(data.count) : items.length;
+      refCache.set(brand, { count, items });
+      applyOptions(items);
+      refCount.textContent = `登録数: ${count}件`;
+      setIdleState();
+    } catch (_e) {
+      if (currentRequest !== requestId) return;
+      clearOptions();
+      refCount.textContent = '登録数: 取得失敗';
+      setIdleState();
+    }
+  }
+
+  brandSelect.addEventListener('change', updateReferences);
+
+  if ((brandSelect.value || '').trim()) {
+    updateReferences();
+  } else {
+    clearOptions();
+    refCount.textContent = '登録数: 0件';
+  }
+});
+</script>
+
 {% endblock %}

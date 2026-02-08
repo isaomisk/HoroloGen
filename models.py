@@ -147,6 +147,23 @@ def get_db_connection():
     return conn
 
 
+def get_brands() -> list[str]:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT LOWER(TRIM(brand)) AS brand
+            FROM master_products
+            WHERE brand IS NOT NULL
+              AND TRIM(brand) <> ''
+            ORDER BY brand ASC
+            """
+        ).fetchall()
+        return [row[0] for row in rows if row and row[0] is not None]
+    finally:
+        conn.close()
+
+
 def get_references_by_brand(brand: str) -> tuple[int, list[str]]:
     if not brand:
         return 0, []
@@ -157,7 +174,7 @@ def get_references_by_brand(brand: str) -> tuple[int, list[str]]:
             '''
             SELECT DISTINCT reference
             FROM master_products
-            WHERE brand = ?
+            WHERE LOWER(TRIM(brand)) = LOWER(TRIM(?))
             ORDER BY reference ASC
             LIMIT 3000
             ''',
@@ -167,7 +184,7 @@ def get_references_by_brand(brand: str) -> tuple[int, list[str]]:
             '''
             SELECT COUNT(DISTINCT reference) AS ref_count
             FROM master_products
-            WHERE brand = ?
+            WHERE LOWER(TRIM(brand)) = LOWER(TRIM(?))
             ''',
             (brand,)
         ).fetchone()
