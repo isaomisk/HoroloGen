@@ -7,8 +7,6 @@ __pycache__/
 # venv
 venv/
 .env
-.env.*
-!.env.example
 
 # DB / data / uploads / backups
 *.db
@@ -16,18 +14,7 @@ data/
 uploads/
 backups/
 releases/
-logs/
 
 # macOS
 .DS_Store
 名称未設定4.txt
-
-# local env/db
-.venv/
-horologen.db
-horologen.db.malformed
-
-# local env/db
-.venv/
-horologen.db
-horologen.db.malformed
