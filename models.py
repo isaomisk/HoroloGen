@@ -1,7 +1,9 @@
+import os
 import sqlite3
 import os
 
-DB_PATH = '/Users/misaki/Desktop/HoroloGen/horologen.db'
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "horologen.db")
+
 
 # 必須CSVカラム
 REQUIRED_CSV_COLUMNS = [
