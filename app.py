@@ -1,14 +1,16 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 import json
 import csv
 import io
 import os
+import binascii
 import sqlite3
 from datetime import datetime, timedelta
 
-from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS
+from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS, get_references_by_brand, get_brands
 import llm_client as llmc
 from url_discovery import discover_reference_urls
+from errors import make_error_id, to_user_message, log_exception
 
 # ----------------------------
 # Plan / quota settings
@@ -21,7 +23,7 @@ MONTHLY_LIMIT = int(os.getenv("HOROLOGEN_MONTHLY_LIMIT", "30"))
 # ----------------------------
 app = Flask(__name__)
 init_db()
-app.secret_key = 'horologen-secret-key-change-in-production'
+app.secret_key = os.getenv("HOROLOGEN_SECRET_KEY") or binascii.hexlify(os.urandom(32)).decode("ascii")
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -29,23 +31,18 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 BRANDS = ['cartier', 'omega', 'grand_seiko', 'iwc', 'panerai']
 
 
-# ----------------------------
-# Error humanizer (public message) + log detail
-# ----------------------------
-def humanize_llm_error(e: Exception) -> str:
-    msg = str(e) or ""
-    m = msg.lower()
+def _flash_error_from_exception(e: Exception, context=None, category: str = "error") -> str:
+    error_id = make_error_id()
+    log_exception(app.logger, e, error_id, context or {})
+    flash(to_user_message(e, error_id), category)
+    return error_id
 
-    if "credit balance is too low" in m or "plans & billing" in m:
-        return "使用上限に達しました。管理者にお問い合わせください。"
-    if "rate limit" in m or "too many requests" in m:
-        return "アクセスが集中しています。少し時間を置いてから再度お試しください。"
-    if "api key" in m or "authentication" in m or "unauthorized" in m:
-        return "認証エラーが発生しました。管理者にお問い合わせください。"
-    if "timeout" in m or "timed out" in m or "connection" in m:
-        return "通信が不安定です。時間を置いてから再度お試しください。"
 
-    return "エラーが発生しました。管理者にお問い合わせください。"
+def _flash_error_from_hint(hint: str, context=None, category: str = "error") -> str:
+    error_id = make_error_id()
+    app.logger.error("error_id=%s context=%s hint=%s", error_id, context or {}, hint)
+    flash(to_user_message(RuntimeError(hint), error_id), category)
+    return error_id
 
 
 # ----------------------------
@@ -91,7 +88,7 @@ def consume_quota_or_block(n: int = 1) -> tuple[bool, str]:
 
         if used + n > MONTHLY_LIMIT:
             conn.rollback()
-            return False, "今月の生成回数の上限に達しました。管理者にお問い合わせください。"
+            return False, "quota exceeded"
 
         if row:
             conn.execute(
@@ -113,8 +110,9 @@ def consume_quota_or_block(n: int = 1) -> tuple[bool, str]:
             conn.rollback()
         except Exception:
             pass
-        app.logger.exception("quota check/update failed: %s", e)
-        return False, "システム側でエラーが発生しました。管理者にお問い合わせください。"
+        error_id = make_error_id()
+        log_exception(app.logger, e, error_id, {"scope": "quota", "action": "consume_quota_or_block"})
+        return False, "db locked" if "locked" in (str(e).lower()) else "unknown"
     finally:
         try:
             conn.close()
@@ -198,11 +196,11 @@ def admin_upload():
         file = request.files.get('csv_file')
 
         if not file or file.filename == '':
-            flash('ファイルが選択されていません', 'error')
+            _flash_error_from_hint("csv invalid: file missing", {"route": "admin_upload"})
             return redirect(url_for('admin_upload'))
 
         if not file.filename.endswith('.csv'):
-            flash('CSVファイルを選択してください', 'error')
+            _flash_error_from_hint("csv invalid: extension", {"route": "admin_upload", "filename": file.filename})
             return redirect(url_for('admin_upload'))
 
         conn = None
@@ -214,19 +212,19 @@ def admin_upload():
 
             csv_columns = reader.fieldnames
             if csv_columns is None:
-                flash('CSVファイルが空です', 'error')
+                _flash_error_from_hint("csv invalid: empty", {"route": "admin_upload", "filename": file.filename})
                 return redirect(url_for('admin_upload'))
 
             csv_columns = [col.strip() for col in csv_columns]
 
             missing_columns = set(REQUIRED_CSV_COLUMNS) - set(csv_columns)
             if missing_columns:
-                flash(f'必須カラムが不足しています: {", ".join(sorted(missing_columns))}', 'error')
+                _flash_error_from_hint("csv invalid: missing columns", {"missing_columns": sorted(missing_columns)})
                 return redirect(url_for('admin_upload'))
 
             extra_columns = set(csv_columns) - set(REQUIRED_CSV_COLUMNS)
             if extra_columns:
-                flash(f'不正なカラムが含まれています: {", ".join(sorted(extra_columns))}。インポートを停止します。', 'error')
+                _flash_error_from_hint("csv invalid: extra columns", {"extra_columns": sorted(extra_columns)})
                 return redirect(url_for('admin_upload'))
 
             conn = get_db_connection()
@@ -367,7 +365,7 @@ def admin_upload():
                 flash(f'エラー詳細: {"; ".join(error_details[:5])}', 'warning')
 
         except Exception as e:
-            flash(f'CSV取込中にエラーが発生しました: {e}', 'error')
+            _flash_error_from_exception(e, {"route": "admin_upload", "filename": getattr(file, "filename", "")})
         finally:
             try:
                 if conn:
@@ -392,6 +390,16 @@ def admin_upload():
 
     conn.close()
     return render_template('admin.html', latest_upload=latest_upload, sample_diffs=sample_diffs)
+
+
+@app.route('/staff/references', methods=['GET'])
+def staff_references():
+    brand = request.args.get('brand', '').strip()
+    if not brand:
+        return jsonify({"brand": "", "count": 0, "items": []})
+
+    count, items = get_references_by_brand(brand)
+    return jsonify({"brand": brand, "count": count, "items": items})
 
 
 @app.route('/staff/search', methods=['GET', 'POST'])
@@ -425,7 +433,7 @@ def staff_search():
                 mk, used, rem = get_quota_view()
                 return render_template(
                     'search.html',
-                    brands=BRANDS,
+                    brands=get_brands(),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
                     **debug_defaults
                 )
@@ -438,7 +446,7 @@ def staff_search():
                 mk, used, rem = get_quota_view()
                 return render_template(
                     'search.html',
-                    brands=BRANDS,
+                    brands=get_brands(),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
                     **debug_defaults
                 )
@@ -491,7 +499,7 @@ def staff_search():
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
             if not brand or not reference:
-                flash('ブランドとリファレンスを入力してください', 'error')
+                _flash_error_from_hint("unknown: missing brand/reference", {"route": "staff_search", "action": "delete_override"})
                 return redirect(url_for('staff_search'))
 
             conn = get_db_connection()
@@ -512,7 +520,7 @@ def staff_search():
             brand = request.form.get('brand', '').strip()
             reference = request.form.get('reference', '').strip()
             if not brand or not reference:
-                flash('ブランドとリファレンスを入力してください', 'error')
+                _flash_error_from_hint("unknown: missing brand/reference", {"route": "staff_search", "action": "generate_dummy"})
                 return redirect(url_for('staff_search'))
 
             raw_urls = [
@@ -576,14 +584,13 @@ def staff_search():
 
             ok, msg = consume_quota_or_block(n=1)
             if not ok:
-                flash(msg, 'error')
+                _flash_error_from_hint(msg, {"route": "staff_search", "action": "generate_dummy", "brand": brand, "reference": reference})
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             try:
                 intro_text, specs_text, ref_meta = llmc.generate_article(payload, rewrite_mode="none")
             except Exception as e:
-                app.logger.exception("LLM generate_dummy failed: %s", e)
-                flash(humanize_llm_error(e), 'error')
+                _flash_error_from_exception(e, {"route": "staff_search", "action": "generate_dummy", "brand": brand, "reference": reference})
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             combined_reference_chars = int(ref_meta.get("combined_reference_chars", 0) or 0)
@@ -630,7 +637,7 @@ def staff_search():
                 saved_article_id = cur.lastrowid
                 conn_save.close()
             except Exception as e:
-                flash(f'生成履歴の保存に失敗しました: {e}', 'error')
+                _flash_error_from_exception(e, {"route": "staff_search", "action": "save_generated_article", "brand": brand, "reference": reference})
 
             conn = get_db_connection()
             master = conn.execute('''
@@ -666,7 +673,7 @@ def staff_search():
 
             return render_template(
                 'search.html',
-                brands=BRANDS,
+                brands=get_brands(),
                 brand=brand,
                 reference=reference,
                 master=master,
@@ -713,7 +720,7 @@ def staff_search():
             source_article_id = request.form.get('source_article_id', '').strip()
 
             if not (brand and reference and source_article_id.isdigit()):
-                flash('言い換え対象が不正です', 'error')
+                _flash_error_from_hint("unknown: invalid rewrite target", {"source_article_id": source_article_id})
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             conn = get_db_connection()
@@ -724,7 +731,7 @@ def staff_search():
 
             if not row:
                 conn.close()
-                flash('言い換え対象の履歴が見つかりません', 'error')
+                _flash_error_from_hint("unknown: rewrite source not found", {"source_article_id": source_article_id})
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             payload = {}
@@ -753,15 +760,14 @@ def staff_search():
             ok, msg = consume_quota_or_block(n=1)
             if not ok:
                 conn.close()
-                flash(msg, 'error')
+                _flash_error_from_hint(msg, {"route": "staff_search", "action": "rewrite_once", "brand": brand, "reference": reference})
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             try:
                 intro_text, specs_text, ref_meta = llmc.generate_article(payload, rewrite_mode="force")
             except Exception as e:
                 conn.close()
-                app.logger.exception("LLM rewrite_once failed: %s", e)
-                flash(humanize_llm_error(e), 'error')
+                _flash_error_from_exception(e, {"route": "staff_search", "action": "rewrite_once", "brand": brand, "reference": reference})
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
             payload["selected_reference_url"] = ref_meta.get("selected_reference_url", "")
@@ -830,7 +836,7 @@ def staff_search():
 
             return render_template(
                 'search.html',
-                brands=BRANDS,
+                brands=get_brands(),
                 brand=brand,
                 reference=reference,
                 master=master,
@@ -877,7 +883,7 @@ def staff_search():
             reference = request.form.get('reference', '').strip()
             return redirect(url_for('staff_search', brand=brand, reference=reference))
 
-        flash('不明な操作です', 'error')
+        _flash_error_from_hint("unknown: unsupported action", {"route": "staff_search", "action": action})
         return redirect(url_for('staff_search'))
 
     # ----------------------------
@@ -938,7 +944,7 @@ def staff_search():
 
     return render_template(
         'search.html',
-        brands=BRANDS,
+        brands=get_brands(),
         brand=brand,
         reference=reference,
         master=master,
