@@ -67,3 +67,34 @@
 - GitHub Push Protection に引っかかった場合は、秘匿値を除去して再コミットしてから再度 push する。
 - 本番環境では `HOROLOGEN_SECRET_KEY` を必ず設定する（未設定運用は不可）。
 - Basic認証やセッションを扱うため、本番公開は HTTPS 前提で運用する。
+
+
+## Git: `fatal: bad object refs/heads/...`（壊れref）の復旧
+
+- 症状:
+- `git fetch` / `git pull` が以下のようなエラーで止まる:
+- `fatal: bad object refs/heads/<branch> 2`
+- `error: <remote> did not send all necessary objects`
+- 原因（よくあるパターン）:
+- `.git/refs/heads/` 配下に、ブランチ名として不正な参照ファイルが紛れ込んでいる。
+- 例: `stable-before-admin 2` のように「スペース＋数字」が付いたファイル
+- 復旧手順（sudo禁止）:
+- 1) 現状確認:
+- `ls -la .git/refs/heads`
+- 2) 見覚えのない参照（スペース入り等）があれば中身確認（任意）:
+- `cat ".git/refs/heads/<壊れた名前>"`
+- 3) 壊れrefを削除（必ずダブルクォートで囲む）:
+- `rm -f ".git/refs/heads/<壊れた名前>"`
+- 念のためGit経由でも削除:
+- `git update-ref -d "refs/heads/<壊れた名前>" 2>/dev/null || true`
+- 4) 参照の再パックと再取得:
+- `rm -f .git/packed-refs.lock`
+- `git pack-refs --all --prune`
+- `git fetch --prune origin`
+- `git pull`
+- 5) 解消確認:
+- `git status --short`
+- `git log --oneline -n 5`
+- 補足:
+- `.git` 配下の権限を `sudo` / `chown` で変更すると別事故になりやすいので、まずは上記の“壊れrefのピンポイント削除”で対応する。
+
