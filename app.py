@@ -3,6 +3,7 @@ import json
 import csv
 import io
 import os
+import binascii
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -22,7 +23,7 @@ MONTHLY_LIMIT = int(os.getenv("HOROLOGEN_MONTHLY_LIMIT", "30"))
 # ----------------------------
 app = Flask(__name__)
 init_db()
-app.secret_key = 'horologen-secret-key-change-in-production'
+app.secret_key = os.getenv("HOROLOGEN_SECRET_KEY") or binascii.hexlify(os.urandom(32)).decode("ascii")
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
