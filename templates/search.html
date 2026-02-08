@@ -18,11 +18,8 @@
   </div>
 
   <div class="form-group">
-    <div id="ref_count">登録数: -</div>
     <label for="reference">リファレンス</label>
-    <input type="text" id="reference" name="reference" list="reference_list" value="{{ reference or '' }}" required>
-    <datalist id="reference_list"></datalist>
-    <span id="ref_loading" style="display:none;">読み込み中…</span>
+    <input type="text" id="reference" name="reference" value="{{ reference or '' }}" required>
   </div>
 
   <button type="submit">検索</button>
@@ -84,23 +81,14 @@
     {% endif %}
   </div>
 
-  {% set locked = (generated_intro_text or generated_specs_text) %}
   <form method="POST" style="margin-bottom: 30px;">
     <input type="hidden" name="action" value="generate_dummy">
     <input type="hidden" name="brand" value="{{ brand }}">
     <input type="hidden" name="reference" value="{{ reference }}">
-    {% if locked %}
-      <input type="hidden" name="tone" value="{{ generation_tone if generation_tone else 'casual_friendly' }}">
-      <input type="hidden" name="include_brand_profile" value="{{ 'on' if generation_include_brand_profile else 'off' }}">
-      <input type="hidden" name="include_wearing_scenes" value="{{ 'on' if generation_include_wearing_scenes else 'off' }}">
-      <input type="hidden" name="reference_url_1" value="{{ generation_reference_urls[0] if generation_reference_urls and generation_reference_urls|length > 0 else '' }}">
-      <input type="hidden" name="reference_url_2" value="{{ generation_reference_urls[1] if generation_reference_urls and generation_reference_urls|length > 1 else '' }}">
-      <input type="hidden" name="reference_url_3" value="{{ generation_reference_urls[2] if generation_reference_urls and generation_reference_urls|length > 2 else '' }}">
-    {% endif %}
 
     <div class="form-group">
       <label for="tone">トーン</label>
-      <select id="tone" name="tone" required {% if locked %}disabled{% endif %}>
+      <select id="tone" name="tone" required>
         <option value="luxury" {% if generation_tone == 'luxury' %}selected{% endif %}>フォーマル・権威型（luxury）</option>
         <option value="casual_friendly" {% if generation_tone == 'casual_friendly' or not generation_tone %}selected{% endif %}>カジュアル・親しみ型（casual_friendly）</option>
         <option value="magazine_story" {% if generation_tone == 'magazine_story' %}selected{% endif %}>ストーリー型（magazine_story）</option>
@@ -110,14 +98,14 @@
 
     <div class="form-group">
       <label>
-        <input type="checkbox" name="include_brand_profile" {% if generation_include_brand_profile %}checked{% endif %} {% if locked %}disabled{% endif %}>
+        <input type="checkbox" name="include_brand_profile" {% if generation_include_brand_profile %}checked{% endif %}>
         ブランドプロフィールを含める
       </label>
     </div>
 
     <div class="form-group">
       <label>
-        <input type="checkbox" name="include_wearing_scenes" {% if generation_include_wearing_scenes %}checked{% endif %} {% if locked %}disabled{% endif %}>
+        <input type="checkbox" name="include_wearing_scenes" {% if generation_include_wearing_scenes %}checked{% endif %}>
         装着シーンを含める
       </label>
     </div>
@@ -131,7 +119,6 @@
         value="{{ generation_reference_urls[0] if generation_reference_urls and generation_reference_urls|length > 0 else '' }}"
         placeholder="参考URL 1（推奨）: https://..."
         style="width: 100%; margin-bottom: 8px;"
-        {% if locked %}disabled{% endif %}
       >
 
       <input
@@ -140,7 +127,6 @@
         value="{{ generation_reference_urls[1] if generation_reference_urls and generation_reference_urls|length > 1 else '' }}"
         placeholder="参考URL 2（任意）: https://..."
         style="width: 100%; margin-bottom: 8px;"
-        {% if locked %}disabled{% endif %}
       >
 
       <input
@@ -149,7 +135,6 @@
         value="{{ generation_reference_urls[2] if generation_reference_urls and generation_reference_urls|length > 2 else '' }}"
         placeholder="参考URL 3（任意）: https://..."
         style="width: 100%;"
-        {% if locked %}disabled{% endif %}
       >
 
       <small style="color:#666;">
@@ -423,94 +408,6 @@ function copyToClipboard(elementId) {
   document.execCommand('copy');
   alert('コピーしました');
 }
-</script>
-
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-  const brandSelect = document.getElementById('brand');
-  const referenceInput = document.getElementById('reference');
-  const referenceList = document.getElementById('reference_list');
-  const refCount = document.getElementById('ref_count');
-  const refLoading = document.getElementById('ref_loading');
-
-  if (!brandSelect || !referenceInput || !referenceList || !refCount || !refLoading) {
-    return;
-  }
-
-  const refCache = new Map();
-  let requestId = 0;
-
-  function clearOptions() {
-    referenceList.innerHTML = '';
-  }
-
-  function applyOptions(items) {
-    clearOptions();
-    for (const ref of items) {
-      const option = document.createElement('option');
-      option.value = ref;
-      referenceList.appendChild(option);
-    }
-  }
-
-  function setIdleState() {
-    referenceInput.disabled = false;
-    refLoading.style.display = 'none';
-  }
-
-  async function updateReferences() {
-    const brand = (brandSelect.value || '').trim();
-    const currentRequest = ++requestId;
-
-    if (!brand) {
-      clearOptions();
-      refCount.textContent = '登録数: 0件';
-      setIdleState();
-      return;
-    }
-
-    if (refCache.has(brand)) {
-      const cached = refCache.get(brand);
-      applyOptions(cached.items);
-      refCount.textContent = `登録数: ${cached.count}件`;
-      setIdleState();
-      return;
-    }
-
-    referenceInput.disabled = true;
-    refLoading.style.display = 'inline';
-    refCount.textContent = '登録数: 読み込み中…';
-
-    try {
-      const res = await fetch(`/staff/references?brand=${encodeURIComponent(brand)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-
-      if (currentRequest !== requestId) return;
-
-      const items = Array.isArray(data.items) ? data.items : [];
-      const count = Number.isFinite(Number(data.count)) ? Number(data.count) : items.length;
-      refCache.set(brand, { count, items });
-      applyOptions(items);
-      refCount.textContent = `登録数: ${count}件`;
-      setIdleState();
-    } catch (_e) {
-      if (currentRequest !== requestId) return;
-      clearOptions();
-      refCount.textContent = '登録数: 取得失敗';
-      setIdleState();
-    }
-  }
-
-  brandSelect.addEventListener('change', updateReferences);
-
-  if ((brandSelect.value || '').trim()) {
-    updateReferences();
-  } else {
-    clearOptions();
-    refCount.textContent = '登録数: 0件';
-  }
-});
 </script>
 
 {% endblock %}
