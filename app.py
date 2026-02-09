@@ -5,6 +5,7 @@ import io
 import os
 import binascii
 import sqlite3
+import time
 from datetime import datetime, timedelta
 
 from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS, get_references_by_brand, get_brands, get_recent_generations
@@ -589,8 +590,11 @@ def staff_search():
                 _flash_error_from_hint(msg, {"route": "staff_search", "action": "generate_dummy", "brand": brand, "reference": reference})
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
+            generation_elapsed_sec = None
             try:
+                start = time.perf_counter()
                 intro_text, specs_text, ref_meta = llmc.generate_article(payload, rewrite_mode="none")
+                generation_elapsed_sec = time.perf_counter() - start
             except Exception as e:
                 _flash_error_from_exception(e, {"route": "staff_search", "action": "generate_dummy", "brand": brand, "reference": reference})
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
@@ -613,6 +617,7 @@ def staff_search():
             payload["similarity_percent"] = similarity_percent
             payload["similarity_level"] = similarity_level
             payload["rewrite_applied"] = rewrite_applied
+            payload["elapsed_ms"] = int(round((generation_elapsed_sec or 0) * 1000))
 
             saved_article_id = None
             try:
@@ -703,6 +708,7 @@ def staff_search():
 
                 similarity_percent=similarity_percent,
                 similarity_level=similarity_level,
+                generation_elapsed_sec=generation_elapsed_sec,
 
                 saved_article_id=saved_article_id,
                 rewrite_depth=0,
@@ -766,8 +772,11 @@ def staff_search():
                 _flash_error_from_hint(msg, {"route": "staff_search", "action": "rewrite_once", "brand": brand, "reference": reference})
                 return redirect(url_for('staff_search', brand=brand, reference=reference))
 
+            rewrite_elapsed_sec = None
             try:
+                start = time.perf_counter()
                 intro_text, specs_text, ref_meta = llmc.generate_article(payload, rewrite_mode="force")
+                rewrite_elapsed_sec = time.perf_counter() - start
             except Exception as e:
                 conn.close()
                 _flash_error_from_exception(e, {"route": "staff_search", "action": "rewrite_once", "brand": brand, "reference": reference})
@@ -788,6 +797,7 @@ def staff_search():
             payload["rewrite_applied"] = True
             payload["rewrite_depth"] = 1
             payload["rewrite_parent_id"] = int(source_article_id)
+            payload["elapsed_ms"] = int(round((rewrite_elapsed_sec or 0) * 1000))
 
             cur = conn.execute("""
                 INSERT INTO generated_articles
@@ -868,6 +878,7 @@ def staff_search():
 
                 similarity_percent=similarity_percent,
                 similarity_level=similarity_level,
+                rewrite_elapsed_sec=rewrite_elapsed_sec,
 
                 saved_article_id=saved_article_id,
                 rewrite_depth=1,
