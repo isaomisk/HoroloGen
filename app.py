@@ -363,7 +363,20 @@ def admin_upload():
                 'success'
             )
             if error_details:
-                flash(f'エラー詳細: {"; ".join(error_details[:5])}', 'warning')
+                error_id = make_error_id()
+                log_exception(
+                    app.logger,
+                    RuntimeError('admin_upload had row errors'),
+                    error_id,
+                    {
+                        "route": "admin_upload",
+                        "filename": file.filename,
+                        "total_rows": total_rows,
+                        "error_count": error_count,
+                        "first_errors": error_details[:5],
+                    },
+                )
+                flash(to_user_message(RuntimeError('unknown: admin_upload had row errors'), error_id), 'warning')
 
         except Exception as e:
             _flash_error_from_exception(e, {"route": "admin_upload", "filename": getattr(file, "filename", "")})
