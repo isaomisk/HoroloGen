@@ -28,20 +28,6 @@
   <button type="submit">検索</button>
 </form>
 
-{% if recent_generations %}
-  <h2>直近の生成10件</h2>
-  <div class="alert" style="border:1px solid #ddd; background:#fafafa; margin-bottom:12px;">
-    {% for g in recent_generations %}
-      <div style="margin-bottom:6px;">
-        <a href="{{ url_for('staff_search', brand=g.brand, reference=g.reference) }}">{{ g.brand }} / {{ g.reference }}</a>
-        <span style="color:#666; font-size:12px;">
-          （{{ g.created_at }}{% if g.elapsed_ms is not none %} / {{ '%.1f'|format(g.elapsed_ms / 1000) }}秒{% endif %}）
-        </span>
-      </div>
-    {% endfor %}
-  </div>
-{% endif %}
-
 {% if warnings %}
   {% for warning in warnings %}
   <div class="alert alert-warning">{{ warning }}</div>
@@ -71,32 +57,148 @@
 {% endif %}
 
 {% if canonical %}
-  <h2>正規仕様（Canonical Specs）</h2>
-  <div class="specs-grid">
-    {% for field, value in canonical.items() %}
-    <div class="spec-card {% if field in overridden_fields %}override-field{% endif %}">
-      <div class="spec-label">
-        {{ field }}
-        {% if field in overridden_fields %}
-        <span class="override-badge">オーバーライド</span>
+  <details class="canonical-specs-collapsible">
+    <summary>▶ 正規仕様（Canonical Specs）</summary>
+    <div class="specs-grid">
+      {% for field, value in canonical.items() %}
+      <div class="spec-card {% if field in overridden_fields %}override-field{% endif %}">
+        <div class="spec-label">
+          {{ field }}
+          {% if field in overridden_fields %}
+          <span class="override-badge">オーバーライド</span>
+          {% endif %}
+        </div>
+        <div class="spec-value">{{ value or '(空)' }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+
+  <h2>オーバーライド編集</h2>
+  <form method="POST">
+    <input type="hidden" name="action" value="save_override">
+    <input type="hidden" name="brand" value="{{ brand }}">
+    <input type="hidden" name="reference" value="{{ reference }}">
+
+    <details class="form-group">
+      <summary>オーバーライド詳細項目（クリックで表示）</summary>
+      <div class="specs-grid">
+      <div class="form-group">
+        <label for="price_jpy">価格 (JPY)</label>
+        <input type="text" id="price_jpy" name="price_jpy" value="{{ override.price_jpy if override else '' }}" placeholder="{{ master.price_jpy if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="case_size_mm">ケースサイズ (mm)</label>
+        <input type="text" id="case_size_mm" name="case_size_mm" value="{{ override.case_size_mm if override else '' }}" placeholder="{{ master.case_size_mm if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="movement">ムーブメント</label>
+        <select id="movement" name="movement">
+          <option value="">選択してください</option>
+          <option value="automatic" {% if override and override.movement == 'automatic' %}selected{% endif %}>automatic</option>
+          <option value="manual" {% if override and override.movement == 'manual' %}selected{% endif %}>manual</option>
+          <option value="quartz" {% if override and override.movement == 'quartz' %}selected{% endif %}>quartz</option>
+          <option value="Spring Drive automatic" {% if override and override.movement == 'Spring Drive automatic' %}selected{% endif %}>Spring Drive automatic</option>
+          <option value="Manual winding" {% if override and override.movement == 'Manual winding' %}selected{% endif %}>Manual winding</option>
+        </select>
+        {% if master and master.movement %}
+        <small style="color: #666;">マスタ値: {{ master.movement }}</small>
         {% endif %}
       </div>
-      <div class="spec-value">{{ value or '(空)' }}</div>
+
+      <div class="form-group">
+        <label for="case_material">ケース材質</label>
+        <input type="text" id="case_material" name="case_material" value="{{ override.case_material if override else '' }}" placeholder="{{ master.case_material if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="bracelet_strap">ブレスレット/ストラップ</label>
+        <select id="bracelet_strap" name="bracelet_strap">
+          <option value="">選択してください</option>
+          <option value="bracelet" {% if override and override.bracelet_strap == 'bracelet' %}selected{% endif %}>bracelet</option>
+          <option value="strap" {% if override and override.bracelet_strap == 'strap' %}selected{% endif %}>strap</option>
+        </select>
+        {% if master and master.bracelet_strap %}
+        <small style="color: #666;">マスタ値: {{ master.bracelet_strap }}</small>
+        {% endif %}
+      </div>
+
+      <div class="form-group">
+        <label for="dial_color">ダイアルカラー</label>
+        <input type="text" id="dial_color" name="dial_color" value="{{ override.dial_color if override else '' }}" placeholder="{{ master.dial_color if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="water_resistance_m">耐水性能 (m)</label>
+        <input type="text" id="water_resistance_m" name="water_resistance_m" value="{{ override.water_resistance_m if override else '' }}" placeholder="{{ master.water_resistance_m if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="buckle">バックル</label>
+        <select id="buckle" name="buckle">
+          <option value="">選択してください</option>
+          <option value="pin" {% if override and override.buckle == 'pin' %}selected{% endif %}>pin</option>
+          <option value="D" {% if override and override.buckle == 'D' %}selected{% endif %}>D</option>
+        </select>
+        {% if master and master.buckle %}
+        <small style="color: #666;">マスタ値: {{ master.buckle }}</small>
+        {% endif %}
+      </div>
+
+      <div class="form-group">
+        <label for="warranty_years">保証期間 (年)</label>
+        <input type="text" id="warranty_years" name="warranty_years" value="{{ override.warranty_years if override else '' }}" placeholder="{{ master.warranty_years if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="collection">コレクション</label>
+        <input type="text" id="collection" name="collection" value="{{ override.collection if override else '' }}" placeholder="{{ master.collection if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="movement_caliber">ムーブメントキャリバー</label>
+        <input type="text" id="movement_caliber" name="movement_caliber" value="{{ override.movement_caliber if override else '' }}" placeholder="{{ master.movement_caliber if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="case_thickness_mm">ケース厚さ (mm)</label>
+        <input type="text" id="case_thickness_mm" name="case_thickness_mm" value="{{ override.case_thickness_mm if override else '' }}" placeholder="{{ master.case_thickness_mm if master else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label for="lug_width_mm">ラグ幅 (mm)</label>
+        <input type="text" id="lug_width_mm" name="lug_width_mm" value="{{ override.lug_width_mm if override else '' }}" placeholder="{{ master.lug_width_mm if master else '' }}">
+      </div>
+
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label for="remarks">備考</label>
+        <textarea id="remarks" name="remarks" rows="3">{{ override.remarks if override else '' }}</textarea>
+        {% if master and master.remarks %}
+        <small style="color: #666;">マスタ値: {{ master.remarks }}</small>
+        {% endif %}
+      </div>
+      </div>
+    </details>
+
+    <div class="form-group" style="grid-column: 1 / -1; margin-top: 15px;">
+      <label for="editor_note">スタッフ追加入力（必ず文章に反映されます）</label>
+      <textarea
+        id="editor_note"
+        name="editor_note"
+        rows="4"
+        placeholder="接客での実体験・商品の魅力・エピソードなどを自由に記載してください。">{{ override.editor_note if override and override.editor_note else '' }}</textarea>
+
+      <small style="color:#666;">
+        ※ここに入力した内容は、”スペック上書き保存”をクリックすると商品紹介文に必ず反映されます。
+      </small>
     </div>
-    {% endfor %}
-  </div>
+
+    <button type="submit" style="margin-top: 20px;">オーバーライドを保存</button>
+  </form>
 
   <h2>記事生成（ダミー）</h2>
-  <div class="alert" style="border:1px solid #ddd; background:#fafafa; margin-bottom:12px;">
-    <div><strong>プラン:</strong> {{ plan_mode }}</div>
-    <div><strong>対象月:</strong> {{ month_key }}</div>
-    {% if plan_mode == 'unlimited' %}
-      <div><strong>生成回数:</strong> 無制限</div>
-    {% else %}
-      <div><strong>今月の生成回数:</strong> {{ monthly_used }} / {{ monthly_limit }}</div>
-      <div><strong>残り:</strong> {{ monthly_remaining }}</div>
-    {% endif %}
-  </div>
 
   {% set locked = (generated_intro_text or generated_specs_text) %}
   <form method="POST" style="margin-bottom: 30px;">
@@ -311,127 +413,34 @@
     {% endfor %}
   {% endif %}
 
-  <h2>オーバーライド編集</h2>
-  <form method="POST">
-    <input type="hidden" name="action" value="save_override">
-    <input type="hidden" name="brand" value="{{ brand }}">
-    <input type="hidden" name="reference" value="{{ reference }}">
-
-    <div class="specs-grid">
-      <div class="form-group">
-        <label for="price_jpy">価格 (JPY)</label>
-        <input type="text" id="price_jpy" name="price_jpy" value="{{ override.price_jpy if override else '' }}" placeholder="{{ master.price_jpy if master else '' }}">
-      </div>
-
-      <div class="form-group">
-        <label for="case_size_mm">ケースサイズ (mm)</label>
-        <input type="text" id="case_size_mm" name="case_size_mm" value="{{ override.case_size_mm if override else '' }}" placeholder="{{ master.case_size_mm if master else '' }}">
-      </div>
-
-      <div class="form-group">
-        <label for="movement">ムーブメント</label>
-        <select id="movement" name="movement">
-          <option value="">選択してください</option>
-          <option value="automatic" {% if override and override.movement == 'automatic' %}selected{% endif %}>automatic</option>
-          <option value="manual" {% if override and override.movement == 'manual' %}selected{% endif %}>manual</option>
-          <option value="quartz" {% if override and override.movement == 'quartz' %}selected{% endif %}>quartz</option>
-          <option value="Spring Drive automatic" {% if override and override.movement == 'Spring Drive automatic' %}selected{% endif %}>Spring Drive automatic</option>
-          <option value="Manual winding" {% if override and override.movement == 'Manual winding' %}selected{% endif %}>Manual winding</option>
-        </select>
-        {% if master and master.movement %}
-        <small style="color: #666;">マスタ値: {{ master.movement }}</small>
-        {% endif %}
-      </div>
-
-      <div class="form-group">
-        <label for="case_material">ケース材質</label>
-        <input type="text" id="case_material" name="case_material" value="{{ override.case_material if override else '' }}" placeholder="{{ master.case_material if master else '' }}">
-      </div>
-
-      <div class="form-group">
-        <label for="bracelet_strap">ブレスレット/ストラップ</label>
-        <select id="bracelet_strap" name="bracelet_strap">
-          <option value="">選択してください</option>
-          <option value="bracelet" {% if override and override.bracelet_strap == 'bracelet' %}selected{% endif %}>bracelet</option>
-          <option value="strap" {% if override and override.bracelet_strap == 'strap' %}selected{% endif %}>strap</option>
-        </select>
-        {% if master and master.bracelet_strap %}
-        <small style="color: #666;">マスタ値: {{ master.bracelet_strap }}</small>
-        {% endif %}
-      </div>
-
-      <div class="form-group">
-        <label for="dial_color">ダイアルカラー</label>
-        <input type="text" id="dial_color" name="dial_color" value="{{ override.dial_color if override else '' }}" placeholder="{{ master.dial_color if master else '' }}">
-      </div>
-
-      <div class="form-group">
-        <label for="water_resistance_m">耐水性能 (m)</label>
-        <input type="text" id="water_resistance_m" name="water_resistance_m" value="{{ override.water_resistance_m if override else '' }}" placeholder="{{ master.water_resistance_m if master else '' }}">
-      </div>
-
-      <div class="form-group">
-        <label for="buckle">バックル</label>
-        <select id="buckle" name="buckle">
-          <option value="">選択してください</option>
-          <option value="pin" {% if override and override.buckle == 'pin' %}selected{% endif %}>pin</option>
-          <option value="D" {% if override and override.buckle == 'D' %}selected{% endif %}>D</option>
-        </select>
-        {% if master and master.buckle %}
-        <small style="color: #666;">マスタ値: {{ master.buckle }}</small>
-        {% endif %}
-      </div>
-
-      <div class="form-group">
-        <label for="warranty_years">保証期間 (年)</label>
-        <input type="text" id="warranty_years" name="warranty_years" value="{{ override.warranty_years if override else '' }}" placeholder="{{ master.warranty_years if master else '' }}">
-      </div>
-
-      <div class="form-group">
-        <label for="collection">コレクション</label>
-        <input type="text" id="collection" name="collection" value="{{ override.collection if override else '' }}" placeholder="{{ master.collection if master else '' }}">
-      </div>
-
-      <div class="form-group">
-        <label for="movement_caliber">ムーブメントキャリバー</label>
-        <input type="text" id="movement_caliber" name="movement_caliber" value="{{ override.movement_caliber if override else '' }}" placeholder="{{ master.movement_caliber if master else '' }}">
-      </div>
-
-      <div class="form-group">
-        <label for="case_thickness_mm">ケース厚さ (mm)</label>
-        <input type="text" id="case_thickness_mm" name="case_thickness_mm" value="{{ override.case_thickness_mm if override else '' }}" placeholder="{{ master.case_thickness_mm if master else '' }}">
-      </div>
-
-      <div class="form-group">
-        <label for="lug_width_mm">ラグ幅 (mm)</label>
-        <input type="text" id="lug_width_mm" name="lug_width_mm" value="{{ override.lug_width_mm if override else '' }}" placeholder="{{ master.lug_width_mm if master else '' }}">
-      </div>
-
-      <div class="form-group" style="grid-column: 1 / -1;">
-        <label for="remarks">備考</label>
-        <textarea id="remarks" name="remarks" rows="3">{{ override.remarks if override else '' }}</textarea>
-        {% if master and master.remarks %}
-        <small style="color: #666;">マスタ値: {{ master.remarks }}</small>
-        {% endif %}
-      </div>
-    </div>
-
-    <div class="form-group" style="grid-column: 1 / -1; margin-top: 15px;">
-      <label for="editor_note">スタッフ追加入力（必ず文章に反映されます）</label>
-      <textarea
-        id="editor_note"
-        name="editor_note"
-        rows="4"
-        placeholder="接客での実体験・商品の魅力・エピソードなどを自由に記載してください。">{{ override.editor_note if override and override.editor_note else '' }}</textarea>
-
-      <small style="color:#666;">
-        ※ここに入力した内容は、商品紹介文（intro）に必ず反映されます。
-      </small>
-    </div>
-
-    <button type="submit" style="margin-top: 20px;">オーバーライドを保存</button>
-  </form>
 {% endif %}
+
+{% if recent_generations %}
+  <div class="alert" style="border:1px solid #ddd; background:#fafafa; margin-bottom:12px;">
+    <h2 style="margin:0 0 8px 0;">直近の生成10件</h2>
+    {% for g in recent_generations %}
+      <div style="margin-bottom:6px;">
+        <a href="{{ url_for('staff_search', brand=g.brand, reference=g.reference) }}">{{ g.brand }} / {{ g.reference }}</a>
+        <span style="color:#666; font-size:12px;">
+          （{{ g.created_at }}{% if g.elapsed_ms is not none %} / {{ '%.1f'|format(g.elapsed_ms / 1000) }}秒{% endif %}）
+        </span>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<section style="border:1px solid #ddd; background:#fafafa; border-radius:4px; padding:12px; margin-bottom:12px;">
+  <h2 style="margin:0 0 8px 0;">利用状況</h2>
+  <div><strong>プラン:</strong> {{ plan_mode }}</div>
+  <div><strong>対象月:</strong> {{ month_key }}</div>
+  {% if plan_mode == 'unlimited' %}
+    <div><strong>今月の生成回数:</strong> 無制限</div>
+    <div><strong>残り:</strong> 無制限</div>
+  {% else %}
+    <div><strong>今月の生成回数:</strong> {{ monthly_used }} / {{ monthly_limit }}</div>
+    <div><strong>残り:</strong> {{ monthly_remaining }}</div>
+  {% endif %}
+</section>
 
 <script>
 function copyToClipboard(elementId) {
