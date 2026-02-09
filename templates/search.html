@@ -34,7 +34,9 @@
     {% for g in recent_generations %}
       <div style="margin-bottom:6px;">
         <a href="{{ url_for('staff_search', brand=g.brand, reference=g.reference) }}">{{ g.brand }} / {{ g.reference }}</a>
-        <span style="color:#666; font-size:12px;">（{{ g.created_at }}）</span>
+        <span style="color:#666; font-size:12px;">
+          （{{ g.created_at }}{% if g.elapsed_ms is not none %} / {{ '%.1f'|format(g.elapsed_ms / 1000) }}秒{% endif %}）
+        </span>
       </div>
     {% endfor %}
   </div>
@@ -178,6 +180,11 @@
 
   {% if generated_intro_text or generated_specs_text %}
     <h3>生成結果</h3>
+    {% if generation_elapsed_sec is defined and generation_elapsed_sec is not none %}
+      <div style="color:#666; font-size:12px; margin-bottom:8px;">所要時間: {{ '%.1f'|format(generation_elapsed_sec) }}秒</div>
+    {% elif rewrite_elapsed_sec is defined and rewrite_elapsed_sec is not none %}
+      <div style="color:#666; font-size:12px; margin-bottom:8px;">所要時間: {{ '%.1f'|format(rewrite_elapsed_sec) }}秒</div>
+    {% endif %}
 
     {% if selected_reference_url %}
       <div class="alert alert-info" style="margin-bottom: 12px;">

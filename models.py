@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import json
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "horologen.db")
 
@@ -207,13 +208,28 @@ def get_recent_generations(limit: int = 10) -> list[dict]:
     try:
         rows = conn.execute(
             """
-            SELECT id, brand, reference, created_at
+            SELECT id, brand, reference, created_at, payload_json
             FROM generated_articles
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
             (n,)
         ).fetchall()
-        return [dict(row) for row in rows]
+        out = []
+        for row in rows:
+            item = dict(row)
+            elapsed_ms = None
+            payload_raw = item.get("payload_json")
+            if payload_raw:
+                try:
+                    payload = json.loads(payload_raw)
+                    v = payload.get("elapsed_ms")
+                    if v is not None:
+                        elapsed_ms = int(v)
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    elapsed_ms = None
+            item["elapsed_ms"] = elapsed_ms
+            out.append(item)
+        return out
     finally:
         conn.close()
