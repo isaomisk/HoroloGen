@@ -194,3 +194,26 @@ def get_references_by_brand(brand: str) -> tuple[int, list[str]]:
         return count, items
     finally:
         conn.close()
+
+
+def get_recent_generations(limit: int = 10) -> list[dict]:
+    try:
+        n = int(limit)
+    except (TypeError, ValueError):
+        n = 10
+    n = max(1, min(n, 100))
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, brand, reference, created_at
+            FROM generated_articles
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (n,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
