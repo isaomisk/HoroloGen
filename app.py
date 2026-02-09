@@ -7,7 +7,7 @@ import binascii
 import sqlite3
 from datetime import datetime, timedelta
 
-from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS, get_references_by_brand, get_brands
+from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS, get_references_by_brand, get_brands, get_recent_generations
 import llm_client as llmc
 from url_discovery import discover_reference_urls
 from errors import make_error_id, to_user_message, log_exception
@@ -434,6 +434,7 @@ def staff_search():
                 return render_template(
                     'search.html',
                     brands=get_brands(),
+                    recent_generations=get_recent_generations(limit=10),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
                     **debug_defaults
                 )
@@ -447,6 +448,7 @@ def staff_search():
                 return render_template(
                     'search.html',
                     brands=get_brands(),
+                    recent_generations=get_recent_generations(limit=10),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
                     **debug_defaults
                 )
@@ -674,6 +676,7 @@ def staff_search():
             return render_template(
                 'search.html',
                 brands=get_brands(),
+                recent_generations=get_recent_generations(limit=10),
                 brand=brand,
                 reference=reference,
                 master=master,
@@ -837,6 +840,7 @@ def staff_search():
             return render_template(
                 'search.html',
                 brands=get_brands(),
+                recent_generations=get_recent_generations(limit=10),
                 brand=brand,
                 reference=reference,
                 master=master,
@@ -945,6 +949,7 @@ def staff_search():
     return render_template(
         'search.html',
         brands=get_brands(),
+        recent_generations=get_recent_generations(limit=10),
         brand=brand,
         reference=reference,
         master=master,

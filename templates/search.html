@@ -28,6 +28,18 @@
   <button type="submit">検索</button>
 </form>
 
+{% if recent_generations %}
+  <h2>直近の生成10件</h2>
+  <div class="alert" style="border:1px solid #ddd; background:#fafafa; margin-bottom:12px;">
+    {% for g in recent_generations %}
+      <div style="margin-bottom:6px;">
+        <a href="{{ url_for('staff_search', brand=g.brand, reference=g.reference) }}">{{ g.brand }} / {{ g.reference }}</a>
+        <span style="color:#666; font-size:12px;">（{{ g.created_at }}）</span>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
 {% if warnings %}
   {% for warning in warnings %}
   <div class="alert alert-warning">{{ warning }}</div>
