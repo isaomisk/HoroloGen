@@ -252,3 +252,90 @@ def get_recent_generations(limit: int = 10) -> list[dict]:
         return out
     finally:
         conn.close()
+
+
+def get_total_product_count() -> int:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT reference) AS cnt
+            FROM master_products
+            WHERE reference IS NOT NULL
+              AND TRIM(reference) <> ''
+            """
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    finally:
+        conn.close()
+
+
+def get_brand_summary_rows(month_start_iso: str, month_end_iso: str) -> list[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        brands = get_brands()
+
+        product_counts = {
+            row[0]: int(row[1] or 0)
+            for row in conn.execute(
+                """
+                SELECT LOWER(TRIM(brand)) AS brand_norm, COUNT(DISTINCT reference) AS product_count
+                FROM master_products
+                WHERE brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                  AND reference IS NOT NULL
+                  AND TRIM(reference) <> ''
+                GROUP BY LOWER(TRIM(brand))
+                """
+            ).fetchall()
+        }
+
+        monthly_generations = {
+            row[0]: int(row[1] or 0)
+            for row in conn.execute(
+                """
+                SELECT LOWER(TRIM(brand)) AS brand_norm, COUNT(*) AS monthly_count
+                FROM generated_articles
+                WHERE brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                  AND datetime(created_at, '+9 hours') >= ?
+                  AND datetime(created_at, '+9 hours') < ?
+                GROUP BY LOWER(TRIM(brand))
+                """,
+                (month_start_iso, month_end_iso),
+            ).fetchall()
+        }
+
+        latest_references = {
+            row[0]: (row[1] or "")
+            for row in conn.execute(
+                """
+                SELECT brand_norm, reference
+                FROM (
+                    SELECT
+                        LOWER(TRIM(brand)) AS brand_norm,
+                        reference,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY LOWER(TRIM(brand))
+                            ORDER BY created_at DESC, id DESC
+                        ) AS rn
+                    FROM generated_articles
+                    WHERE brand IS NOT NULL
+                      AND TRIM(brand) <> ''
+                )
+                WHERE rn = 1
+                """
+            ).fetchall()
+        }
+
+        rows = []
+        for brand in brands:
+            rows.append({
+                "brand": brand,
+                "product_count": product_counts.get(brand, 0),
+                "monthly_generations": monthly_generations.get(brand, 0),
+                "latest_reference": latest_references.get(brand, ""),
+            })
+        return rows
+    finally:
+        conn.close()

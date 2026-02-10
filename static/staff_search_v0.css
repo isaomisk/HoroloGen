@@ -21,6 +21,13 @@
   margin-bottom: 16px;
 }
 
+.staff-search-v0 .v0-page-head-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .staff-search-v0 .v0-page-head h1 {
   margin: 0;
   border: 0;
@@ -33,6 +40,98 @@
   margin-top: 6px;
   color: var(--v0-muted);
   font-size: 0.9rem;
+}
+
+.staff-search-v0 .v0-dual-clock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.staff-search-v0 .v0-analog-clock {
+  flex-shrink: 0;
+}
+
+.staff-search-v0 .v0-analog-face {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1.5px solid hsl(220 13% 82%);
+  background: #ffffff;
+  position: relative;
+}
+
+.staff-search-v0 .v0-analog-face::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 999px;
+  background:
+    linear-gradient(hsl(220 20% 20%), hsl(220 20% 20%)) center top/1.6px 5px no-repeat,
+    linear-gradient(hsl(220 20% 20%), hsl(220 20% 20%)) center bottom/1.6px 5px no-repeat,
+    linear-gradient(hsl(220 20% 20%), hsl(220 20% 20%)) left center/5px 1.6px no-repeat,
+    linear-gradient(hsl(220 20% 20%), hsl(220 20% 20%)) right center/5px 1.6px no-repeat;
+  pointer-events: none;
+}
+
+.staff-search-v0 .v0-hour-hand,
+.staff-search-v0 .v0-minute-hand,
+.staff-search-v0 .v0-second-hand {
+  position: absolute;
+  left: 50%;
+  bottom: 50%;
+  transform-origin: 50% 100%;
+  transform: rotate(0deg);
+  border-radius: 999px;
+}
+
+.staff-search-v0 .v0-hour-hand {
+  width: 2.2px;
+  height: 11px;
+  margin-left: -1.1px;
+  background: hsl(220 20% 18%);
+}
+
+.staff-search-v0 .v0-minute-hand {
+  width: 1.6px;
+  height: 15px;
+  margin-left: -0.8px;
+  background: hsl(220 20% 25%);
+}
+
+.staff-search-v0 .v0-second-hand {
+  width: 1px;
+  height: 17px;
+  margin-left: -0.5px;
+  background: hsl(0 72% 51%);
+}
+
+.staff-search-v0 .v0-clock-center {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: hsl(220 20% 18%);
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.staff-search-v0 .v0-digital-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #18212f;
+  line-height: 1;
+}
+
+.staff-search-v0 .v0-digital-date {
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: #6b7280;
 }
 
 .staff-search-v0 .v0-card {
@@ -700,6 +799,82 @@
   margin-bottom: 4px;
 }
 
+.staff-search-v0 .v0-card-summary > h2 .v0-title-icon {
+  background: hsl(200 55% 44%);
+}
+
+.staff-search-v0 .v0-summary-total {
+  font-size: 13px;
+  color: #5f6b7b;
+  margin-bottom: 10px;
+}
+
+.staff-search-v0 .v0-summary-total strong {
+  font-size: 15px;
+  color: #18212f;
+}
+
+.staff-search-v0 .v0-summary-table-wrap {
+  border-top: 1px solid hsl(220 13% 88%);
+  overflow-x: auto;
+}
+
+.staff-search-v0 .v0-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.staff-search-v0 .v0-summary-table th,
+.staff-search-v0 .v0-summary-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid hsl(220 13% 90%);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.staff-search-v0 .v0-summary-table th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.staff-search-v0 .v0-summary-brand {
+  font-size: 14px;
+  font-weight: 500;
+  color: #18212f;
+}
+
+.staff-search-v0 .v0-summary-num {
+  font-size: 14px;
+  font-weight: 600;
+  color: #18212f;
+}
+
+.staff-search-v0 .v0-summary-ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  color: #334155;
+}
+
+.staff-search-v0 .v0-summary-link {
+  color: #334155;
+  text-decoration: none;
+}
+
+.staff-search-v0 .v0-summary-link:hover {
+  text-decoration: underline;
+}
+
+.staff-search-v0 .v0-summary-empty {
+  border-top: 1px solid hsl(220 13% 88%);
+  padding: 12px 8px 4px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
 .staff-search-v0 .v0-history-item {
   margin: 10px 0;
   padding: 16px;
@@ -903,6 +1078,11 @@
     grid-template-columns: 1fr;
   }
 
+  .staff-search-v0 .v0-page-head-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .staff-search-v0 .specs-grid {
     grid-template-columns: 1fr;
   }
@@ -915,6 +1095,12 @@
 
   .staff-search-v0 .v0-recent-meta {
     margin-left: 30px;
+  }
+
+  .staff-search-v0 .v0-summary-table th,
+  .staff-search-v0 .v0-summary-table td {
+    padding: 8px 6px;
+    font-size: 12px;
   }
 
   .staff-search-v0 {
