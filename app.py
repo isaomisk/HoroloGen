@@ -574,6 +574,7 @@ def staff_search():
             if not brand or not reference:
                 _flash_error_from_hint("unknown: missing brand/reference", {"route": "staff_search", "action": "generate_dummy"})
                 return redirect(url_for('staff_search'))
+            editor_note_in_form = request.form.get('editor_note', '').strip()
 
             raw_urls = [
                 request.form.get('reference_url_1', '').strip(),
@@ -598,6 +599,26 @@ def staff_search():
                 SELECT * FROM product_overrides
                 WHERE brand = ? AND reference = ?
             ''', (brand, reference)).fetchone()
+
+            saved_editor_note = (
+                override['editor_note']
+                if override and 'editor_note' in override.keys() and override['editor_note']
+                else ''
+            )
+            if editor_note_in_form and editor_note_in_form != saved_editor_note:
+                conn.execute('''
+                    INSERT INTO product_overrides (brand, reference, editor_note, updated_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(brand, reference) DO UPDATE SET
+                        editor_note = excluded.editor_note,
+                        updated_at = CURRENT_TIMESTAMP
+                ''', (brand, reference, editor_note_in_form))
+                conn.commit()
+                override = conn.execute('''
+                    SELECT * FROM product_overrides
+                    WHERE brand = ? AND reference = ?
+                ''', (brand, reference)).fetchone()
+                flash("スタッフの体験談を追加して文章を生成します", "warning")
 
             canonical = {}
             for f in fields:

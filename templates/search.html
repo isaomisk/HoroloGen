@@ -224,6 +224,7 @@
       <small style="color:#666;">
         ※ここに入力した内容は、”スペック上書き保存”をクリックすると商品紹介文に必ず反映されます。
       </small>
+      <input type="hidden" id="saved_editor_note" value="{{ override.editor_note if override and override.editor_note else '' }}">
     </div>
 
     <button type="submit" class="v0-override-save-btn" style="margin-top: 20px;">オーバーライドを保存</button>
@@ -552,6 +553,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const referenceSuggestions = document.getElementById('reference_suggestions');
   const refCount = document.getElementById('ref_count');
   const refLoading = document.getElementById('ref_loading');
+  const generateForm = document.querySelector('form.v0-article-form');
+  const editorNote = document.getElementById('editor_note');
+  const savedEditorNote = document.getElementById('saved_editor_note');
 
   if (!brandSelect || !referenceInput || !referenceSuggestions || !refCount || !refLoading) {
     return;
@@ -667,6 +671,26 @@ document.addEventListener('DOMContentLoaded', () => {
       hideSuggestions();
     }
   });
+
+  if (generateForm && editorNote) {
+    generateForm.addEventListener('submit', () => {
+      let hiddenEditorNote = generateForm.querySelector('input[name="editor_note"]');
+      if (!hiddenEditorNote) {
+        hiddenEditorNote = document.createElement('input');
+        hiddenEditorNote.type = 'hidden';
+        hiddenEditorNote.name = 'editor_note';
+        generateForm.appendChild(hiddenEditorNote);
+      }
+
+      const current = (editorNote.value || '').trim();
+      const saved = savedEditorNote ? (savedEditorNote.value || '').trim() : '';
+      hiddenEditorNote.value = current;
+
+      if (current !== '' && current !== saved) {
+        window.alert("スタッフの体験談を追加して文章を生成します");
+      }
+    });
+  }
 
   brandSelect.addEventListener('change', updateReferences);
 
