@@ -8,12 +8,12 @@
 {% block content %}
 <div class="staff-search-v0">
 <div class="v0-page-head">
-  <h1>Staff: 検索・オーバーライド</h1>
+  <h1>検索・記事作成</h1>
   <p>ブランドとリファレンスを指定して、仕様確認・記事生成・オーバーライド編集を行えます。</p>
 </div>
 
 <section class="v0-card v0-card-search">
-<h2><span class="v0-title-icon">🔎</span>検索</h2>
+<h2><span class="v0-title-icon"><i data-lucide="search"></i></span>検索</h2>
 <form method="POST" class="v0-search-form">
   <input type="hidden" name="action" value="search">
   <div class="form-group v0-field">
@@ -29,8 +29,10 @@
   <div class="form-group v0-field">
     <div id="ref_count" class="v0-muted">登録数: -</div>
     <label for="reference">リファレンス</label>
-    <input type="text" id="reference" name="reference" list="reference_list" value="{{ reference or '' }}" required>
-    <datalist id="reference_list"></datalist>
+    <div class="v0-reference-wrap">
+      <input type="text" id="reference" name="reference" value="{{ reference or '' }}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <div id="reference_suggestions" class="v0-reference-suggestions" hidden></div>
+    </div>
     <span id="ref_loading" class="v0-loading" style="display:none;">読み込み中…</span>
   </div>
 
@@ -69,7 +71,7 @@
 {% if canonical %}
 <section class="v0-card v0-card-canonical">
   <details class="canonical-specs-collapsible">
-    <summary><span class="v0-title-icon">📚</span>▶ 正規仕様（Canonical Specs）<span class="v0-collapsible-hint"></span></summary>
+    <summary><span class="v0-title-icon"><i data-lucide="book-open"></i></span>▶ 正規仕様（Canonical Specs）<span class="v0-canonical-count">{{ canonical|length }}項目</span><span class="v0-collapsible-hint"></span></summary>
     <div class="specs-grid">
       {% for field, value in canonical.items() %}
       <div class="spec-card {% if field in overridden_fields %}override-field{% endif %}">
@@ -87,15 +89,15 @@
 </section>
 
   <section class="v0-card v0-card-override">
-  <h2><span class="v0-title-icon">⚙️</span>オーバーライド編集</h2>
+  <h2><span class="v0-title-icon"><i data-lucide="settings"></i></span>オーバーライド編集</h2>
   <form method="POST">
     <input type="hidden" name="action" value="save_override">
     <input type="hidden" name="brand" value="{{ brand }}">
     <input type="hidden" name="reference" value="{{ reference }}">
 
-    <details class="form-group">
+    <details class="form-group v0-override-details">
       <summary>オーバーライド詳細項目<span class="v0-collapsible-hint"></span></summary>
-      <div class="specs-grid">
+      <div class="specs-grid v0-override-grid">
       <div class="form-group">
         <label for="price_jpy">価格 (JPY)</label>
         <input type="text" id="price_jpy" name="price_jpy" value="{{ override.price_jpy if override else '' }}" placeholder="{{ master.price_jpy if master else '' }}">
@@ -208,24 +210,23 @@
       </small>
     </div>
 
-    <button type="submit" style="margin-top: 20px;">オーバーライドを保存</button>
+    <button type="submit" class="v0-override-save-btn" style="margin-top: 20px;">オーバーライドを保存</button>
   </form>
 </section>
 
   <section class="v0-card v0-card-article">
-  <h2><span class="v0-title-icon">✨</span>記事生成（ダミー）</h2>
+  <h2><span class="v0-title-icon"><i data-lucide="sparkles"></i></span>記事生成（ダミー）</h2>
   <div class="v0-article-meta">
-    <div>プラン: {{ plan_mode }}</div>
-    <div>対象月: {{ month_key }}</div>
+    <div class="v0-article-meta-left">プラン: {{ plan_mode }} / 対象月: {{ month_key }}</div>
     {% if plan_mode == 'unlimited' %}
-      <div>残り: 無制限</div>
+      <div class="v0-article-meta-right">残り 無制限</div>
     {% else %}
-      <div>残り: {{ monthly_remaining }} / {{ monthly_limit }}</div>
+      <div class="v0-article-meta-right">残り {{ monthly_remaining }} / {{ monthly_limit }}</div>
     {% endif %}
   </div>
 
   {% set locked = (generated_intro_text or generated_specs_text) %}
-  <form method="POST" style="margin-bottom: 30px;">
+  <form method="POST" class="v0-article-form">
     <input type="hidden" name="action" value="generate_dummy">
     <input type="hidden" name="brand" value="{{ brand }}">
     <input type="hidden" name="reference" value="{{ reference }}">
@@ -247,52 +248,48 @@
         <option value="practical" {% if generation_tone == 'practical' %}selected{% endif %}>実用・標準（practical）</option>
       </select>
     </div>
-
-    <div class="form-group">
-      <label>
+    <div class="v0-check-row">
+      <label class="v0-check-item">
         <input type="checkbox" name="include_brand_profile" {% if generation_include_brand_profile %}checked{% endif %} {% if locked %}disabled{% endif %}>
         ブランドプロフィールを含める
       </label>
-    </div>
-
-    <div class="form-group">
-      <label>
+      <label class="v0-check-item">
         <input type="checkbox" name="include_wearing_scenes" {% if generation_include_wearing_scenes %}checked{% endif %} {% if locked %}disabled{% endif %}>
         装着シーンを含める
       </label>
     </div>
 
-    <div class="form-group">
-      <label>参考URL（任意・最大3本）</label>
+    <div class="form-group v0-url-group">
+      <label class="v0-url-label">参考URL（任意・最大3本）</label>
 
       <input
+        class="v0-url-input"
         type="url"
         name="reference_url_1"
         value="{{ generation_reference_urls[0] if generation_reference_urls and generation_reference_urls|length > 0 else '' }}"
         placeholder="参考URL 1（推奨）: https://..."
-        style="width: 100%; margin-bottom: 8px;"
         {% if locked %}disabled{% endif %}
       >
 
       <input
+        class="v0-url-input"
         type="url"
         name="reference_url_2"
         value="{{ generation_reference_urls[1] if generation_reference_urls and generation_reference_urls|length > 1 else '' }}"
         placeholder="参考URL 2（任意）: https://..."
-        style="width: 100%; margin-bottom: 8px;"
         {% if locked %}disabled{% endif %}
       >
 
       <input
+        class="v0-url-input"
         type="url"
         name="reference_url_3"
         value="{{ generation_reference_urls[2] if generation_reference_urls and generation_reference_urls|length > 2 else '' }}"
         placeholder="参考URL 3（任意）: https://..."
-        style="width: 100%;"
         {% if locked %}disabled{% endif %}
       >
 
-      <small style="color:#666;">
+      <small class="v0-url-help">
         公式 / 正規代理店 / 許可メディアなど、信頼できるページを最大3本まで貼れます（ホワイトリスト外は取得されません）
       </small>
     </div>
@@ -300,20 +297,20 @@
     {% set quota_ok = (plan_mode == 'unlimited') or (monthly_remaining|default(0) > 0) %}
     <button type="submit" class="v0-generate-btn" {% if not quota_ok %}disabled{% endif %}>記事生成（ダミー）</button>
     {% if not quota_ok %}
-      <div style="color:#c00; font-size:12px; margin-top:6px;">※今月の生成上限に達しています</div>
+      <div class="v0-quota-error">※今月の生成上限に達しています</div>
     {% endif %}
   </form>
 
   {% if generated_intro_text or generated_specs_text %}
-    <h3>生成結果</h3>
+    <h3 class="v0-article-subtitle">生成結果</h3>
     {% if generation_elapsed_sec is defined and generation_elapsed_sec is not none %}
-      <div style="color:#666; font-size:12px; margin-bottom:8px;">所要時間: {{ '%.1f'|format(generation_elapsed_sec) }}秒</div>
+      <div class="v0-article-elapsed">所要時間: {{ '%.1f'|format(generation_elapsed_sec) }}秒</div>
     {% elif rewrite_elapsed_sec is defined and rewrite_elapsed_sec is not none %}
-      <div style="color:#666; font-size:12px; margin-bottom:8px;">所要時間: {{ '%.1f'|format(rewrite_elapsed_sec) }}秒</div>
+      <div class="v0-article-elapsed">所要時間: {{ '%.1f'|format(rewrite_elapsed_sec) }}秒</div>
     {% endif %}
 
     {% if selected_reference_url %}
-      <div class="alert alert-info" style="margin-bottom: 12px;">
+      <div class="alert alert-info v0-article-ref">
         <div><strong>参考URL採用:</strong> {{ selected_reference_url }}</div>
         {% if selected_reference_reason %}
         <div><strong>理由:</strong> {{ selected_reference_reason }}</div>
@@ -322,41 +319,41 @@
     {% endif %}
 
     {% set sim_cls = similarity_level|default('blue') %}
-    <div class="alert" style="border:1px solid #ddd; background:#fafafa; margin-bottom:12px;">
+    <div class="alert v0-article-sim">
       <div>
         <strong>類似度:</strong>
         <span class="sim-badge {{ sim_cls }}">{{ similarity_percent|default(0) }}%</span>
-        <span style="color:#666; font-size:12px;">（blue / yellow / red）</span>
+        <span class="v0-article-sim-note">（blue / yellow / red）</span>
       </div>
 
       {% if saved_article_id and (rewrite_depth|default(0) == 0) %}
-        <form method="POST" style="margin-top:10px;">
+        <form method="POST" class="v0-article-rewrite-form">
           <input type="hidden" name="action" value="rewrite_once">
           <input type="hidden" name="brand" value="{{ brand }}">
           <input type="hidden" name="reference" value="{{ reference }}">
           <input type="hidden" name="source_article_id" value="{{ saved_article_id }}">
-          <button type="submit">言い換え再生成（1回）</button>
-          <small style="color:#666; display:block; margin-top:6px;">
+          <button type="submit" class="v0-article-rewrite-btn">言い換え再生成（1回）</button>
+          <small class="v0-article-note">
             ※必要なときだけ押してください（最大1回）
           </small>
         </form>
       {% else %}
-        <div style="color:#666; font-size:12px; margin-top:8px;">
+        <div class="v0-article-note">
           ※この文章は言い換え済みのため、再度の言い換えはできません（最大1回）
         </div>
       {% endif %}    
     </div>
 
-    <div class="form-group">
-      <label for="generated_intro">【商品紹介文】 ({{ generated_intro_text|length }}文字)</label>
-      <textarea id="generated_intro" readonly rows="10" style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">{{ generated_intro_text }}</textarea>
-      <button type="button" onclick="copyToClipboard('generated_intro')" style="margin-top: 5px;">コピー</button>
+    <div class="form-group v0-generated-block">
+      <label for="generated_intro" class="v0-generated-label">【商品紹介文】 ({{ generated_intro_text|length }}文字)</label>
+      <textarea id="generated_intro" class="v0-generated-textarea" readonly rows="10">{{ generated_intro_text }}</textarea>
+      <button type="button" class="v0-generated-copy-btn" onclick="copyToClipboard('generated_intro')">コピー</button>
     </div>
 
-    <div class="form-group">
-      <label for="generated_specs">【商品スペック】 ({{ generated_specs_text|length }}文字)</label>
-      <textarea id="generated_specs" readonly rows="10" style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">{{ generated_specs_text }}</textarea>
-      <button type="button" onclick="copyToClipboard('generated_specs')" style="margin-top: 5px;">コピー</button>
+    <div class="form-group v0-generated-block">
+      <label for="generated_specs" class="v0-generated-label">【商品スペック】 ({{ generated_specs_text|length }}文字)</label>
+      <textarea id="generated_specs" class="v0-generated-textarea" readonly rows="10">{{ generated_specs_text }}</textarea>
+      <button type="button" class="v0-generated-copy-btn" onclick="copyToClipboard('generated_specs')">コピー</button>
     </div>
 
     <details style="margin-top:12px;">
@@ -382,7 +379,7 @@
 
   {% if history %}
   <section class="v0-card v0-card-history">
-    <h3><span class="v0-title-icon">🕘</span>生成履歴（直近{{ history|length }}件）</h3>
+    <h3><span class="v0-title-icon"><i data-lucide="history"></i></span>生成履歴（直近{{ history|length }}件）</h3>
     <div class="v0-history-list">
 
     {% for h in history %}
@@ -442,7 +439,7 @@
 
 {% if recent_generations %}
   <section class="v0-card v0-card-recent">
-    <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon">🧾</span>直近の生成10件</h2>
+    <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon"><i data-lucide="clock-3"></i></span>直近の生成10件</h2>
     <div class="v0-recent-list">
     {% for g in recent_generations %}
       <div class="v0-recent-row">
@@ -469,7 +466,7 @@
 {% endif %}
 
 <section class="v0-card v0-card-usage">
-  <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon">📊</span>利用状況</h2>
+  <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon"><i data-lucide="bar-chart-3"></i></span>利用状況</h2>
   <div><strong>プラン:</strong> {{ plan_mode }}</div>
   <div><strong>対象月:</strong> {{ month_key }}</div>
   {% if plan_mode == 'unlimited' %}
@@ -481,6 +478,7 @@
   {% endif %}
 </section>
 
+<script src="https://unpkg.com/lucide@latest"></script>
 <script>
 function copyToClipboard(elementId) {
   const el = document.getElementById(elementId);
@@ -494,30 +492,64 @@ function copyToClipboard(elementId) {
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons();
+  }
   const brandSelect = document.getElementById('brand');
   const referenceInput = document.getElementById('reference');
-  const referenceList = document.getElementById('reference_list');
+  const referenceSuggestions = document.getElementById('reference_suggestions');
   const refCount = document.getElementById('ref_count');
   const refLoading = document.getElementById('ref_loading');
 
-  if (!brandSelect || !referenceInput || !referenceList || !refCount || !refLoading) {
+  if (!brandSelect || !referenceInput || !referenceSuggestions || !refCount || !refLoading) {
     return;
   }
 
   const refCache = new Map();
   let requestId = 0;
+  let referenceItems = [];
+
+  function hideSuggestions() {
+    referenceSuggestions.hidden = true;
+    referenceSuggestions.innerHTML = '';
+  }
 
   function clearOptions() {
-    referenceList.innerHTML = '';
+    referenceItems = [];
+    hideSuggestions();
+  }
+
+  function renderSuggestions(query) {
+    const q = (query || '').trim().toLowerCase();
+    const filtered = q
+      ? referenceItems.filter((ref) => ref.toLowerCase().includes(q))
+      : referenceItems;
+    const limited = filtered.slice(0, 80);
+
+    if (!limited.length || referenceInput.disabled) {
+      hideSuggestions();
+      return;
+    }
+
+    referenceSuggestions.innerHTML = '';
+    for (const ref of limited) {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'v0-reference-option';
+      option.textContent = ref;
+      option.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        referenceInput.value = ref;
+        hideSuggestions();
+      });
+      referenceSuggestions.appendChild(option);
+    }
+    referenceSuggestions.hidden = false;
   }
 
   function applyOptions(items) {
-    clearOptions();
-    for (const ref of items) {
-      const option = document.createElement('option');
-      option.value = ref;
-      referenceList.appendChild(option);
-    }
+    referenceItems = Array.isArray(items) ? items : [];
+    renderSuggestions(referenceInput.value);
   }
 
   function setIdleState() {
@@ -568,6 +600,21 @@ document.addEventListener('DOMContentLoaded', () => {
       setIdleState();
     }
   }
+
+  referenceInput.addEventListener('focus', () => renderSuggestions(referenceInput.value));
+  referenceInput.addEventListener('input', () => renderSuggestions(referenceInput.value));
+  referenceInput.addEventListener('blur', () => {
+    setTimeout(() => hideSuggestions(), 120);
+  });
+  referenceInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideSuggestions();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!referenceSuggestions.contains(e.target) && e.target !== referenceInput) {
+      hideSuggestions();
+    }
+  });
 
   brandSelect.addEventListener('change', updateReferences);
 
