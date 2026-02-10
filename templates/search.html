@@ -8,7 +8,23 @@
 {% block content %}
 <div class="staff-search-v0">
 <div class="v0-page-head">
-  <h1>検索・記事作成</h1>
+  <div class="v0-page-head-top">
+    <h1>検索・記事作成</h1>
+    <div class="v0-dual-clock" aria-label="現在時刻">
+      <div class="v0-analog-clock" aria-hidden="true">
+        <div class="v0-analog-face">
+          <span class="v0-hour-hand" id="clock_hour_hand"></span>
+          <span class="v0-minute-hand" id="clock_minute_hand"></span>
+          <span class="v0-second-hand" id="clock_second_hand"></span>
+          <span class="v0-clock-center"></span>
+        </div>
+      </div>
+      <div class="v0-digital-clock">
+        <div class="v0-digital-time" id="clock_time">--:--:--</div>
+        <div class="v0-digital-date" id="clock_date">----/--/-- ---</div>
+      </div>
+    </div>
+  </div>
   <p>ブランドとリファレンスを指定して、仕様確認・記事生成・オーバーライド編集を行えます。</p>
 </div>
 
@@ -465,16 +481,52 @@
   </section>
 {% endif %}
 
-<section class="v0-card v0-card-usage">
-  <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon"><i data-lucide="bar-chart-3"></i></span>利用状況</h2>
-  <div><strong>プラン:</strong> {{ plan_mode }}</div>
-  <div><strong>対象月:</strong> {{ month_key }}</div>
-  {% if plan_mode == 'unlimited' %}
-    <div><strong>今月の生成回数:</strong> 無制限</div>
-    <div><strong>残り:</strong> 無制限</div>
+<section class="v0-card v0-card-summary">
+  <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon"><i data-lucide="watch"></i></span>サマリー</h2>
+  <div class="v0-summary-total">全商品登録数 : <strong>{{ total_product_count }}</strong></div>
+  {% if brand_summaries and brand_summaries|length > 0 %}
+  <div class="v0-summary-table-wrap">
+    <table class="v0-summary-table">
+      <thead>
+        <tr>
+          <th>ブランド名</th>
+          <th>商品登録数</th>
+          <th>今月の生成件数</th>
+          <th>直近の生成リファレンス</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in brand_summaries %}
+        <tr>
+          <td class="v0-summary-brand">{{ row.brand }}</td>
+          <td class="v0-summary-num">{{ row.product_count }}</td>
+          <td class="v0-summary-num">{{ row.monthly_generations }}</td>
+          <td class="v0-summary-ref">
+            {% if row.latest_reference %}
+              {% set ns = namespace(latest_match=None) %}
+              {% if recent_generations %}
+                {% for g in recent_generations %}
+                  {% if ns.latest_match is none and (g.reference == row.latest_reference) and (g.brand|trim|lower == row.brand|trim|lower) %}
+                    {% set ns.latest_match = g %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+              {% if ns.latest_match %}
+                <a class="v0-summary-link" href="{{ url_for('staff_search', brand=ns.latest_match.brand, reference=ns.latest_match.reference) }}">{{ row.latest_reference }}</a>
+              {% else %}
+                {{ row.latest_reference }}
+              {% endif %}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% else %}
-    <div><strong>今月の生成回数:</strong> {{ monthly_used }} / {{ monthly_limit }}</div>
-    <div><strong>残り:</strong> {{ monthly_remaining }}</div>
+  <div class="v0-summary-empty">データなし</div>
   {% endif %}
 </section>
 
@@ -625,6 +677,55 @@ document.addEventListener('DOMContentLoaded', () => {
     refCount.textContent = '登録数: 0件';
   }
 });
+</script>
+
+<script>
+(() => {
+  const hourHand = document.getElementById('clock_hour_hand');
+  const minuteHand = document.getElementById('clock_minute_hand');
+  const secondHand = document.getElementById('clock_second_hand');
+  const digitalTime = document.getElementById('clock_time');
+  const digitalDate = document.getElementById('clock_date');
+
+  if (!hourHand || !minuteHand || !secondHand || !digitalTime || !digitalDate) {
+    return;
+  }
+
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  function renderClock(now) {
+    const hours = now.getHours() % 12;
+    const minutes = now.getMinutes();
+    const seconds = now.getSeconds();
+
+    const hourDeg = hours * 30 + minutes * 0.5;
+    const minuteDeg = minutes * 6;
+    const secondDeg = seconds * 6;
+
+    hourHand.style.transform = `rotate(${hourDeg}deg)`;
+    minuteHand.style.transform = `rotate(${minuteDeg}deg)`;
+    secondHand.style.transform = `rotate(${secondDeg}deg)`;
+
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
+    const y = now.getFullYear();
+    const mo = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+
+    digitalTime.textContent = `${h}:${m}:${s}`;
+    digitalDate.textContent = `${y}/${mo}/${d} ${weekdays[now.getDay()]}`;
+  }
+
+  renderClock(new Date());
+
+  const now = new Date();
+  const msToNextSecond = 1000 - now.getMilliseconds();
+  setTimeout(() => {
+    renderClock(new Date());
+    setInterval(() => renderClock(new Date()), 1000);
+  }, msToNextSecond);
+})();
 </script>
 
 </div>

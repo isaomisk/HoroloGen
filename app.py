@@ -8,7 +8,16 @@ import sqlite3
 import time
 from datetime import datetime, timedelta
 
-from models import init_db, get_db_connection, REQUIRED_CSV_COLUMNS, get_references_by_brand, get_brands, get_recent_generations
+from models import (
+    init_db,
+    get_db_connection,
+    REQUIRED_CSV_COLUMNS,
+    get_references_by_brand,
+    get_brands,
+    get_recent_generations,
+    get_total_product_count,
+    get_brand_summary_rows,
+)
 import llm_client as llmc
 from url_discovery import discover_reference_urls
 from errors import make_error_id, to_user_message, log_exception
@@ -132,6 +141,24 @@ def get_quota_view() -> tuple[str, int, int]:
             conn.close()
         except Exception:
             pass
+
+
+def _month_range_jst_from_key(month_key: str) -> tuple[str, str]:
+    base = datetime.strptime(month_key, "%Y-%m")
+    if base.month == 12:
+        next_month = datetime(base.year + 1, 1, 1)
+    else:
+        next_month = datetime(base.year, base.month + 1, 1)
+    start = base.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    end = next_month.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_brand_summary_view(month_key: str) -> tuple[int, list[dict]]:
+    start_iso, end_iso = _month_range_jst_from_key(month_key)
+    total = get_total_product_count()
+    rows = get_brand_summary_rows(start_iso, end_iso)
+    return total, rows
 
 
 # ----------------------------
@@ -437,6 +464,13 @@ def staff_search():
         "saved_article_id": None,
     }
 
+    mk0, _, _ = get_quota_view()
+    total_product_count, brand_summaries = get_brand_summary_view(mk0)
+    summary_defaults = {
+        "total_product_count": total_product_count,
+        "brand_summaries": brand_summaries,
+    }
+
     if request.method == 'POST':
         action = request.form.get('action', '').strip()
 
@@ -450,6 +484,7 @@ def staff_search():
                     brands=get_brands(),
                     recent_generations=get_recent_generations(limit=10),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
+                    **summary_defaults,
                     **debug_defaults
                 )
             return redirect(url_for('staff_search', brand=brand, reference=reference))
@@ -464,6 +499,7 @@ def staff_search():
                     brands=get_brands(),
                     recent_generations=get_recent_generations(limit=10),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
+                    **summary_defaults,
                     **debug_defaults
                 )
 
@@ -731,6 +767,7 @@ def staff_search():
                 monthly_used=used,
                 monthly_remaining=rem,
                 month_key=mk,
+                **summary_defaults,
             )
 
         # ----------------------------
@@ -901,6 +938,7 @@ def staff_search():
                 monthly_used=used,
                 monthly_remaining=rem,
                 month_key=mk,
+                **summary_defaults,
 
                 history=history,
             )
@@ -990,6 +1028,7 @@ def staff_search():
         monthly_used=used,
         monthly_remaining=rem,
         month_key=mk,
+        **summary_defaults,
 
         **debug_defaults,
     )
