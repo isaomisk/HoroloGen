@@ -422,7 +422,7 @@
       <div style="margin-bottom:6px;">
         <a href="{{ url_for('staff_search', brand=g.brand, reference=g.reference) }}">{{ g.brand }} / {{ g.reference }}</a>
         <span style="color:#666; font-size:12px;">
-          （{{ g.created_at }}{% if g.elapsed_ms is not none %} / {{ '%.1f'|format(g.elapsed_ms / 1000) }}秒{% endif %}）
+          （{{ g.created_at_jst }}{% if g.elapsed_ms is not none %} / {{ '%.1f'|format(g.elapsed_ms / 1000) }}秒{% endif %}）
         </span>
       </div>
     {% endfor %}
