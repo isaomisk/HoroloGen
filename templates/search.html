@@ -1,13 +1,22 @@
 {% extends "base.html" %}
 
 {% block title %}Staff: 検索・オーバーライド - HoroloGen{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='staff_search_v0.css') }}">
+{% endblock %}
 
 {% block content %}
-<h1>Staff: 検索・オーバーライド</h1>
+<div class="staff-search-v0">
+<div class="v0-page-head">
+  <h1>Staff: 検索・オーバーライド</h1>
+  <p>ブランドとリファレンスを指定して、仕様確認・記事生成・オーバーライド編集を行えます。</p>
+</div>
 
-<form method="POST" style="margin-bottom: 30px;">
+<section class="v0-card v0-card-search">
+<h2><span class="v0-title-icon">🔎</span>検索</h2>
+<form method="POST" class="v0-search-form">
   <input type="hidden" name="action" value="search">
-  <div class="form-group">
+  <div class="form-group v0-field">
     <label for="brand">ブランド</label>
     <select id="brand" name="brand" required>
       <option value="">選択してください</option>
@@ -17,16 +26,17 @@
     </select>
   </div>
 
-  <div class="form-group">
-    <div id="ref_count">登録数: -</div>
+  <div class="form-group v0-field">
+    <div id="ref_count" class="v0-muted">登録数: -</div>
     <label for="reference">リファレンス</label>
     <input type="text" id="reference" name="reference" list="reference_list" value="{{ reference or '' }}" required>
     <datalist id="reference_list"></datalist>
-    <span id="ref_loading" style="display:none;">読み込み中…</span>
+    <span id="ref_loading" class="v0-loading" style="display:none;">読み込み中…</span>
   </div>
 
-  <button type="submit">検索</button>
+  <button type="submit" class="v0-primary-btn">検索</button>
 </form>
+</section>
 
 {% if warnings %}
   {% for warning in warnings %}
@@ -44,7 +54,7 @@
 {% endif %}
 
 {% if override %}
-<div style="margin-bottom: 20px;">
+<div class="v0-inline-actions">
   <form method="POST" style="display: inline;">
     <input type="hidden" name="action" value="delete_override">
     <input type="hidden" name="brand" value="{{ brand }}">
@@ -57,8 +67,9 @@
 {% endif %}
 
 {% if canonical %}
+<section class="v0-card v0-card-canonical">
   <details class="canonical-specs-collapsible">
-    <summary>▶ 正規仕様（Canonical Specs）</summary>
+    <summary><span class="v0-title-icon">📚</span>▶ 正規仕様（Canonical Specs）<span class="v0-collapsible-hint"></span></summary>
     <div class="specs-grid">
       {% for field, value in canonical.items() %}
       <div class="spec-card {% if field in overridden_fields %}override-field{% endif %}">
@@ -73,15 +84,17 @@
       {% endfor %}
     </div>
   </details>
+</section>
 
-  <h2>オーバーライド編集</h2>
+  <section class="v0-card v0-card-override">
+  <h2><span class="v0-title-icon">⚙️</span>オーバーライド編集</h2>
   <form method="POST">
     <input type="hidden" name="action" value="save_override">
     <input type="hidden" name="brand" value="{{ brand }}">
     <input type="hidden" name="reference" value="{{ reference }}">
 
     <details class="form-group">
-      <summary>オーバーライド詳細項目（クリックで表示）</summary>
+      <summary>オーバーライド詳細項目<span class="v0-collapsible-hint"></span></summary>
       <div class="specs-grid">
       <div class="form-group">
         <label for="price_jpy">価格 (JPY)</label>
@@ -197,8 +210,19 @@
 
     <button type="submit" style="margin-top: 20px;">オーバーライドを保存</button>
   </form>
+</section>
 
-  <h2>記事生成（ダミー）</h2>
+  <section class="v0-card v0-card-article">
+  <h2><span class="v0-title-icon">✨</span>記事生成（ダミー）</h2>
+  <div class="v0-article-meta">
+    <div>プラン: {{ plan_mode }}</div>
+    <div>対象月: {{ month_key }}</div>
+    {% if plan_mode == 'unlimited' %}
+      <div>残り: 無制限</div>
+    {% else %}
+      <div>残り: {{ monthly_remaining }} / {{ monthly_limit }}</div>
+    {% endif %}
+  </div>
 
   {% set locked = (generated_intro_text or generated_specs_text) %}
   <form method="POST" style="margin-bottom: 30px;">
@@ -274,7 +298,7 @@
     </div>
 
     {% set quota_ok = (plan_mode == 'unlimited') or (monthly_remaining|default(0) > 0) %}
-    <button type="submit" {% if not quota_ok %}disabled{% endif %}>記事生成（ダミー）</button>
+    <button type="submit" class="v0-generate-btn" {% if not quota_ok %}disabled{% endif %}>記事生成（ダミー）</button>
     {% if not quota_ok %}
       <div style="color:#c00; font-size:12px; margin-top:6px;">※今月の生成上限に達しています</div>
     {% endif %}
@@ -336,7 +360,7 @@
     </div>
 
     <details style="margin-top:12px;">
-      <summary>デバッグ：URL本文が取得できているか（開く）</summary>
+      <summary>デバッグ：URL本文が取得できているか<span class="v0-collapsible-hint"></span></summary>
       <div style="font-size:12px; color:#444; margin-top:8px;">
         <div><strong>llm_client_file:</strong> {{ llm_client_file }}</div>
         <div><strong>raw_urls_debug:</strong> {{ raw_urls_debug }}</div>
@@ -354,83 +378,98 @@
       </div>
     </details>
   {% endif %}
+</section>
 
   {% if history %}
-    <hr>
-    <h3>生成履歴（直近{{ history|length }}件）</h3>
+  <section class="v0-card v0-card-history">
+    <h3><span class="v0-title-icon">🕘</span>生成履歴（直近{{ history|length }}件）</h3>
+    <div class="v0-history-list">
 
     {% for h in history %}
-      <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd;">
-        <div style="color:#666; font-size: 12px;">
-          #{{ h.id }} / {{ h.created_at }}
-        </div>
-
-        {% set h_cls = (h.similarity_level or 'blue') %}
-        <div style="margin-top:6px; font-size: 12px; color:#444;">
-          <strong>類似度:</strong>
-          <span class="sim-badge {{ h_cls }}">{{ h.similarity_percent|default(0) }}%</span>
-        </div>
-
-        {% if h.selected_reference_url %}
-          <div style="margin-top:6px; font-size: 12px; color:#444;">
-            <div><strong>参考URL採用:</strong> {{ h.selected_reference_url }}</div>
-            {% if h.selected_reference_reason %}
-            <div><strong>理由:</strong> {{ h.selected_reference_reason }}</div>
-            {% endif %}
+      <div class="v0-history-item">
+        <div class="v0-history-head">
+          <div class="v0-history-meta">
+            <span class="v0-history-id">#{{ h.id }}</span>
+            <span class="v0-history-date">{{ h.created_at }}</span>
           </div>
-        {% endif %}
+          {% set h_cls = (h.similarity_level or 'blue') %}
+          <div class="v0-history-similarity">
+            <span class="sim-badge {{ h_cls }}">類似度 {{ h.similarity_percent|default(0) }}%</span>
+          </div>
+        </div>
 
-        <details style="margin-top:8px;">
-          <summary>商品紹介文</summary>
-          <textarea id="hist_intro_{{ h.id }}" readonly rows="8" style="width:100%; font-family: monospace; white-space: pre-wrap;">{{ h.intro_text }}</textarea>
-          <button type="button" onclick="copyToClipboard('hist_intro_{{ h.id }}')" style="margin-top: 6px;">紹介文をコピー</button>
+        <div class="v0-history-reference">
+          <div class="v0-history-reference-url"><strong>参考URL採用:</strong> {{ h.selected_reference_url or '（なし）' }}</div>
+          <div class="v0-history-reference-reason"><strong>理由:</strong> {{ h.selected_reference_reason or '（なし）' }}</div>
+        </div>
+
+        <details class="v0-history-details v0-history-intro">
+          <summary>商品紹介文<span class="v0-collapsible-hint"></span></summary>
+          <textarea id="hist_intro_{{ h.id }}" readonly rows="8">{{ h.intro_text }}</textarea>
+          <button type="button" class="v0-history-copy-btn" onclick="copyToClipboard('hist_intro_{{ h.id }}')">紹介文をコピー</button>
         </details>
 
-        <details style="margin-top:8px;">
-          <summary>商品スペック</summary>
-          <textarea id="hist_specs_{{ h.id }}" readonly rows="8" style="width:100%; font-family: monospace; white-space: pre-wrap;">{{ h.specs_text }}</textarea>
-          <button type="button" onclick="copyToClipboard('hist_specs_{{ h.id }}')" style="margin-top: 6px;">スペックをコピー</button>
+        <details class="v0-history-details v0-history-specs">
+          <summary>商品スペック<span class="v0-collapsible-hint"></span></summary>
+          <textarea id="hist_specs_{{ h.id }}" readonly rows="8">{{ h.specs_text }}</textarea>
+          <button type="button" class="v0-history-copy-btn" onclick="copyToClipboard('hist_specs_{{ h.id }}')">スペックをコピー</button>
         </details>
 
         {% if (h.rewrite_depth|default(0) == 0) and ((plan_mode == 'unlimited') or (monthly_remaining|default(0) > 0)) %}
-          <form method="POST" style="margin-top: 10px;">
+          <form method="POST" class="v0-history-rewrite-form">
             <input type="hidden" name="action" value="rewrite_once">
             <input type="hidden" name="brand" value="{{ brand }}">
             <input type="hidden" name="reference" value="{{ reference }}">
             <input type="hidden" name="source_article_id" value="{{ h.id }}">
-            <button type="submit" onclick="this.disabled=true; this.form.submit();">この履歴を言い換え再生成（1回）</button>
+            <button type="submit" class="v0-history-rewrite-btn" onclick="this.disabled=true; this.form.submit();">この履歴を言い換え再生成（1回）</button>
           </form>
         {% elif (h.rewrite_depth|default(0) != 0) %}
-          <div style="color:#666; font-size:12px; margin-top:8px;">
+          <div class="v0-history-note">
             ※この履歴は言い換え済みのため、再度の言い換えはできません（最大1回）
           </div>
         {% else %}
-          <div style="color:#c00; font-size:12px; margin-top:8px;">
+          <div class="v0-history-note v0-history-note-error">
             ※今月の生成上限に達しているため、言い換えできません
           </div>
         {% endif %}
       </div>
     {% endfor %}
+    </div>
+  </section>
   {% endif %}
 
 {% endif %}
 
 {% if recent_generations %}
-  <div class="alert" style="border:1px solid #ddd; background:#fafafa; margin-bottom:12px;">
-    <h2 style="margin:0 0 8px 0;">直近の生成10件</h2>
+  <section class="v0-card v0-card-recent">
+    <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon">🧾</span>直近の生成10件</h2>
+    <div class="v0-recent-list">
     {% for g in recent_generations %}
-      <div style="margin-bottom:6px;">
-        <a href="{{ url_for('staff_search', brand=g.brand, reference=g.reference) }}">{{ g.brand }} / {{ g.reference }}</a>
-        <span style="color:#666; font-size:12px;">
-          （{{ g.created_at_jst }}{% if g.elapsed_ms is not none %} / {{ '%.1f'|format(g.elapsed_ms / 1000) }}秒{% endif %}）
-        </span>
+      <div class="v0-recent-row">
+        <div class="v0-recent-main">
+          <span class="v0-recent-rank">{{ loop.index }}</span>
+          <div class="v0-recent-title">
+            <a class="v0-recent-link" href="{{ url_for('staff_search', brand=g.brand, reference=g.reference) }}">
+              <span class="v0-recent-brand">{{ g.brand }}</span>
+              <span class="v0-recent-divider">/</span>
+              <span class="v0-recent-ref">{{ g.reference }}</span>
+            </a>
+          </div>
+        </div>
+        <div class="v0-recent-meta">
+          {% if g.elapsed_ms is not none %}
+            <span class="v0-recent-duration">{{ '%.1f'|format(g.elapsed_ms / 1000) }}秒</span>
+          {% endif %}
+          <span class="v0-recent-date">{{ g.created_at_jst }}</span>
+        </div>
       </div>
     {% endfor %}
-  </div>
+    </div>
+  </section>
 {% endif %}
 
-<section style="border:1px solid #ddd; background:#fafafa; border-radius:4px; padding:12px; margin-bottom:12px;">
-  <h2 style="margin:0 0 8px 0;">利用状況</h2>
+<section class="v0-card v0-card-usage">
+  <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon">📊</span>利用状況</h2>
   <div><strong>プラン:</strong> {{ plan_mode }}</div>
   <div><strong>対象月:</strong> {{ month_key }}</div>
   {% if plan_mode == 'unlimited' %}
@@ -541,4 +580,5 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+</div>
 {% endblock %}
