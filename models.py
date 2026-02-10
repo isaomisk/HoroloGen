@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import json
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "horologen.db")
 
@@ -218,6 +220,23 @@ def get_recent_generations(limit: int = 10) -> list[dict]:
         out = []
         for row in rows:
             item = dict(row)
+            created_at_raw = item.get("created_at")
+            created_at_jst = created_at_raw
+            try:
+                dt = datetime.fromisoformat(created_at_raw) if created_at_raw else None
+            except ValueError:
+                dt = None
+            if dt is None and created_at_raw:
+                try:
+                    dt = datetime.strptime(created_at_raw, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    dt = None
+            if dt is not None:
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                created_at_jst = dt.astimezone(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d %H:%M:%S")
+            item["created_at_jst"] = created_at_jst
+
             elapsed_ms = None
             payload_raw = item.get("payload_json")
             if payload_raw:
