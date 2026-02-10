@@ -31,3 +31,6 @@ horologen.db.malformed
 .venv/
 horologen.db
 horologen.db.malformed
+
+# local v0 export (do not commit)
+docs/v0/
