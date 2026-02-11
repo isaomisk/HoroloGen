@@ -19,6 +19,8 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from psycopg import connect as pg_connect
+from psycopg.rows import dict_row
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "horologen.db")
 DEFAULT_DATABASE_URL = f"sqlite:///{DB_PATH}"
@@ -107,6 +109,67 @@ def _sqlite_connect(row_factory: bool = False):
     return conn
 
 
+def _is_postgres_url(url: str) -> bool:
+    return url.startswith("postgresql://") or url.startswith("postgresql+psycopg://")
+
+
+def _convert_qmark_to_format(sql: str, n_params: int) -> str:
+    if n_params <= 0:
+        return sql
+    out = []
+    replaced = 0
+    for ch in sql:
+        if ch == "?" and replaced < n_params:
+            out.append("%s")
+            replaced += 1
+        else:
+            out.append(ch)
+    if replaced != n_params:
+        raise ValueError(f"placeholder mismatch: expected {n_params} '?', replaced {replaced}")
+    return "".join(out)
+
+
+class PostgresCursorCompat:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.lastrowid = None
+
+    def execute(self, sql: str, params=()):
+        if params is None:
+            params = ()
+        if isinstance(params, dict):
+            raise TypeError("PostgresCursorCompat expects positional params (tuple/list), got dict")
+        self._cursor.execute(_convert_qmark_to_format(sql, len(params)), params)
+        return self
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+
+class PostgresConnCompat:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def cursor(self):
+        return PostgresCursorCompat(self._conn.cursor(row_factory=dict_row))
+
+    def execute(self, sql: str, params=()):
+        cur = self.cursor()
+        return cur.execute(sql, params)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+
 # 必須CSVカラム
 REQUIRED_CSV_COLUMNS = [
     'brand', 'reference', 'price_jpy', 'case_size_mm', 'movement',
@@ -117,6 +180,10 @@ REQUIRED_CSV_COLUMNS = [
 
 def init_db():
     """データベースを初期化"""
+    if get_database_url().startswith("postgresql"):
+        # PostgreSQL schema is managed via Alembic.
+        return
+
     conn = _sqlite_connect()
     cursor = conn.cursor()
 
@@ -124,6 +191,7 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS master_products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER,
             brand TEXT NOT NULL,
             reference TEXT NOT NULL,
             price_jpy TEXT,
@@ -142,7 +210,7 @@ def init_db():
             remarks TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(brand, reference)
+            UNIQUE(tenant_id, brand, reference)
         )
     ''')
 
@@ -150,6 +218,7 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS product_overrides (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER,
             brand TEXT NOT NULL,
             reference TEXT NOT NULL,
             price_jpy TEXT,
@@ -169,7 +238,7 @@ def init_db():
             editor_note TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(brand, reference)
+            UNIQUE(tenant_id, brand, reference)
         )
     ''')
 
@@ -203,11 +272,15 @@ def init_db():
     _add_column_safe('product_overrides', 'editor_note TEXT')
     _add_column_safe('generated_articles', 'rewrite_depth INTEGER DEFAULT 0')
     _add_column_safe('generated_articles', 'rewrite_parent_id INTEGER')
+    _add_column_safe('master_products', 'tenant_id INTEGER')
+    _add_column_safe('product_overrides', 'tenant_id INTEGER')
+    _add_column_safe('generated_articles', 'tenant_id INTEGER')
 
     # generated_articles テーブル（記事生成履歴）
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS generated_articles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER,
             brand TEXT NOT NULL,
             reference TEXT NOT NULL,
             payload_json TEXT NOT NULL,
@@ -239,65 +312,143 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_master_products_brand_reference
         ON master_products (brand, reference)
     """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_generated_articles_tenant_created
+        ON generated_articles (tenant_id, created_at DESC)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_master_products_tenant_brand_reference
+        ON master_products (tenant_id, brand, reference)
+    """)
 
     conn.commit()
     conn.close()
 
 def get_db_connection():
     """データベース接続を取得"""
+    db_url = get_database_url()
+    if _is_postgres_url(db_url):
+        # psycopg expects postgresql:// scheme.
+        pg_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        return PostgresConnCompat(pg_connect(pg_url))
     return _sqlite_connect(row_factory=True)
 
 
-def get_brands() -> list[str]:
-    conn = _sqlite_connect()
+def _row_value(row, key: str, idx: int):
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row.get(key)
     try:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT LOWER(TRIM(brand)) AS brand
-            FROM master_products
-            WHERE brand IS NOT NULL
-              AND TRIM(brand) <> ''
-            ORDER BY brand ASC
-            """
-        ).fetchall()
-        return [row[0] for row in rows if row and row[0] is not None]
+        return row[key]
+    except Exception:
+        return row[idx]
+
+
+def get_brands(tenant_id: int | None = None) -> list[str]:
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        if tenant_id is None:
+            cur.execute(
+                """
+                SELECT DISTINCT LOWER(TRIM(brand)) AS brand
+                FROM master_products
+                WHERE brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                ORDER BY brand ASC
+                """
+            )
+        else:
+            cur.execute(
+                """
+                SELECT DISTINCT LOWER(TRIM(brand)) AS brand
+                FROM master_products
+                WHERE tenant_id = ?
+                  AND brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                ORDER BY brand ASC
+                """,
+                (tenant_id,),
+            )
+        rows = cur.fetchall() or []
+        out = []
+        for row in rows:
+            value = _row_value(row, "brand", 0)
+            if value is not None:
+                out.append(value)
+        return out
     finally:
         conn.close()
 
 
-def get_references_by_brand(brand: str) -> tuple[int, list[str]]:
+def get_references_by_brand(brand: str, tenant_id: int | None = None) -> tuple[int, list[str]]:
     if not brand:
         return 0, []
 
-    conn = _sqlite_connect()
+    conn = get_db_connection()
     try:
-        item_rows = conn.execute(
-            '''
-            SELECT DISTINCT reference
-            FROM master_products
-            WHERE LOWER(TRIM(brand)) = LOWER(TRIM(?))
-            ORDER BY reference ASC
-            LIMIT 3000
-            ''',
-            (brand,)
-        ).fetchall()
-        count_row = conn.execute(
-            '''
-            SELECT COUNT(DISTINCT reference) AS ref_count
-            FROM master_products
-            WHERE LOWER(TRIM(brand)) = LOWER(TRIM(?))
-            ''',
-            (brand,)
-        ).fetchone()
+        cur = conn.cursor()
+        if tenant_id is None:
+            cur.execute(
+                '''
+                SELECT DISTINCT reference
+                FROM master_products
+                WHERE LOWER(TRIM(brand)) = LOWER(TRIM(?))
+                ORDER BY reference ASC
+                LIMIT 3000
+                ''',
+                (brand,)
+            )
+            item_rows = cur.fetchall() or []
 
-        items = [row[0] for row in item_rows if row and row[0] is not None]
-        count = int(count_row[0]) if count_row else 0
+            cur.execute(
+                '''
+                SELECT COUNT(DISTINCT reference) AS ref_count
+                FROM master_products
+                WHERE LOWER(TRIM(brand)) = LOWER(TRIM(?))
+                ''',
+                (brand,)
+            )
+            count_row = cur.fetchone()
+        else:
+            cur.execute(
+                '''
+                SELECT DISTINCT reference
+                FROM master_products
+                WHERE tenant_id = ?
+                  AND LOWER(TRIM(brand)) = LOWER(TRIM(?))
+                ORDER BY reference ASC
+                LIMIT 3000
+                ''',
+                (tenant_id, brand)
+            )
+            item_rows = cur.fetchall() or []
+
+            cur.execute(
+                '''
+                SELECT COUNT(DISTINCT reference) AS ref_count
+                FROM master_products
+                WHERE tenant_id = ?
+                  AND LOWER(TRIM(brand)) = LOWER(TRIM(?))
+                ''',
+                (tenant_id, brand)
+            )
+            count_row = cur.fetchone()
+
+        items = []
+        for row in item_rows:
+            value = _row_value(row, "reference", 0)
+            if value is not None:
+                items.append(value)
+        count_raw = _row_value(count_row, "ref_count", 0)
+        count = int(count_raw) if count_raw is not None else 0
         return count, items
     finally:
         conn.close()
 
 
-def get_recent_generations(limit: int = 10) -> list[dict]:
+def get_recent_generations(limit: int = 10, tenant_id: int | None = None) -> list[dict]:
     try:
         n = int(limit)
     except (TypeError, ValueError):
@@ -306,24 +457,47 @@ def get_recent_generations(limit: int = 10) -> list[dict]:
 
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            """
-            SELECT id, brand, reference, created_at, payload_json
-            FROM generated_articles
-            ORDER BY created_at DESC, id DESC
-            LIMIT ?
-            """,
-            (n,)
-        ).fetchall()
+        cur = conn.cursor()
+        if tenant_id is None:
+            cur.execute(
+                """
+                SELECT id, brand, reference, created_at, payload_json
+                FROM generated_articles
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (n,)
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, brand, reference, created_at, payload_json
+                FROM generated_articles
+                WHERE tenant_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (tenant_id, n)
+            )
+        rows = cur.fetchall() or []
         out = []
         for row in rows:
-            item = dict(row)
+            item = {
+                "id": _row_value(row, "id", 0),
+                "brand": _row_value(row, "brand", 1),
+                "reference": _row_value(row, "reference", 2),
+                "created_at": _row_value(row, "created_at", 3),
+                "payload_json": _row_value(row, "payload_json", 4),
+            }
             created_at_raw = item.get("created_at")
             created_at_jst = created_at_raw
-            try:
-                dt = datetime.fromisoformat(created_at_raw) if created_at_raw else None
-            except ValueError:
-                dt = None
+            if isinstance(created_at_raw, datetime):
+                dt = created_at_raw
+            else:
+                try:
+                    dt = datetime.fromisoformat(created_at_raw) if created_at_raw else None
+                except ValueError:
+                    dt = None
             if dt is None and created_at_raw:
                 try:
                     dt = datetime.strptime(created_at_raw, "%Y-%m-%d %H:%M:%S")
@@ -352,30 +526,68 @@ def get_recent_generations(limit: int = 10) -> list[dict]:
         conn.close()
 
 
-def get_total_product_count() -> int:
-    conn = _sqlite_connect()
+def get_total_product_count(tenant_id: int | None = None) -> int:
+    conn = get_db_connection()
     try:
-        row = conn.execute(
-            """
-            SELECT COUNT(DISTINCT reference) AS cnt
-            FROM master_products
-            WHERE reference IS NOT NULL
-              AND TRIM(reference) <> ''
-            """
-        ).fetchone()
-        return int(row[0]) if row and row[0] is not None else 0
+        cur = conn.cursor()
+        if tenant_id is None:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM master_products
+                """
+            )
+        else:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM master_products
+                WHERE tenant_id = ?
+                """,
+                (tenant_id,),
+            )
+        row = cur.fetchone()
+        cnt = _row_value(row, "cnt", 0)
+        return int(cnt) if cnt is not None else 0
     finally:
         conn.close()
 
 
-def get_brand_summary_rows(month_start_iso: str, month_end_iso: str) -> list[dict]:
-    conn = _sqlite_connect()
+def get_brand_summary_rows(month_start_iso: str, month_end_iso: str, tenant_id: int | None = None) -> list[dict]:
+    conn = get_db_connection()
+    use_postgres = _is_postgres_url(get_database_url())
     try:
-        brands = get_brands()
+        if tenant_id is None:
+            brand_rows = conn.execute(
+                """
+                SELECT DISTINCT LOWER(TRIM(brand)) AS brand
+                FROM master_products
+                WHERE brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                ORDER BY brand ASC
+                """
+            ).fetchall()
+        else:
+            brand_rows = conn.execute(
+                """
+                SELECT DISTINCT LOWER(TRIM(brand)) AS brand
+                FROM master_products
+                WHERE tenant_id = ?
+                  AND brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                ORDER BY brand ASC
+                """,
+                (tenant_id,),
+            ).fetchall()
 
-        product_counts = {
-            row[0]: int(row[1] or 0)
-            for row in conn.execute(
+        brands = []
+        for r in brand_rows or []:
+            v = _row_value(r, "brand", 0)
+            if v is not None:
+                brands.append(v)
+
+        if tenant_id is None:
+            product_rows = conn.execute(
                 """
                 SELECT LOWER(TRIM(brand)) AS brand_norm, COUNT(DISTINCT reference) AS product_count
                 FROM master_products
@@ -386,11 +598,28 @@ def get_brand_summary_rows(month_start_iso: str, month_end_iso: str) -> list[dic
                 GROUP BY LOWER(TRIM(brand))
                 """
             ).fetchall()
+        else:
+            product_rows = conn.execute(
+                """
+                SELECT LOWER(TRIM(brand)) AS brand_norm, COUNT(DISTINCT reference) AS product_count
+                FROM master_products
+                WHERE tenant_id = ?
+                  AND brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                  AND reference IS NOT NULL
+                  AND TRIM(reference) <> ''
+                GROUP BY LOWER(TRIM(brand))
+                """,
+                (tenant_id,),
+            ).fetchall()
+        product_counts = {
+            _row_value(row, "brand_norm", 0): int((_row_value(row, "product_count", 1) or 0))
+            for row in product_rows
+            if _row_value(row, "brand_norm", 0) is not None
         }
 
-        monthly_generations = {
-            row[0]: int(row[1] or 0)
-            for row in conn.execute(
+        if tenant_id is None and not use_postgres:
+            monthly_rows = conn.execute(
                 """
                 SELECT LOWER(TRIM(brand)) AS brand_norm, COUNT(*) AS monthly_count
                 FROM generated_articles
@@ -402,11 +631,55 @@ def get_brand_summary_rows(month_start_iso: str, month_end_iso: str) -> list[dic
                 """,
                 (month_start_iso, month_end_iso),
             ).fetchall()
+        elif tenant_id is None and use_postgres:
+            monthly_rows = conn.execute(
+                """
+                SELECT LOWER(TRIM(brand)) AS brand_norm, COUNT(*) AS monthly_count
+                FROM generated_articles
+                WHERE brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                  AND (created_at + INTERVAL '9 hour') >= ?
+                  AND (created_at + INTERVAL '9 hour') < ?
+                GROUP BY LOWER(TRIM(brand))
+                """,
+                (month_start_iso, month_end_iso),
+            ).fetchall()
+        elif not use_postgres:
+            monthly_rows = conn.execute(
+                """
+                SELECT LOWER(TRIM(brand)) AS brand_norm, COUNT(*) AS monthly_count
+                FROM generated_articles
+                WHERE tenant_id = ?
+                  AND brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                  AND datetime(created_at, '+9 hours') >= ?
+                  AND datetime(created_at, '+9 hours') < ?
+                GROUP BY LOWER(TRIM(brand))
+                """,
+                (tenant_id, month_start_iso, month_end_iso),
+            ).fetchall()
+        else:
+            monthly_rows = conn.execute(
+                """
+                SELECT LOWER(TRIM(brand)) AS brand_norm, COUNT(*) AS monthly_count
+                FROM generated_articles
+                WHERE tenant_id = ?
+                  AND brand IS NOT NULL
+                  AND TRIM(brand) <> ''
+                  AND (created_at + INTERVAL '9 hour') >= ?
+                  AND (created_at + INTERVAL '9 hour') < ?
+                GROUP BY LOWER(TRIM(brand))
+                """,
+                (tenant_id, month_start_iso, month_end_iso),
+            ).fetchall()
+        monthly_generations = {
+            _row_value(row, "brand_norm", 0): int((_row_value(row, "monthly_count", 1) or 0))
+            for row in monthly_rows
+            if _row_value(row, "brand_norm", 0) is not None
         }
 
-        latest_references = {
-            row[0]: (row[1] or "")
-            for row in conn.execute(
+        if tenant_id is None:
+            latest_rows = conn.execute(
                 """
                 SELECT brand_norm, reference
                 FROM (
@@ -424,6 +697,31 @@ def get_brand_summary_rows(month_start_iso: str, month_end_iso: str) -> list[dic
                 WHERE rn = 1
                 """
             ).fetchall()
+        else:
+            latest_rows = conn.execute(
+                """
+                SELECT brand_norm, reference
+                FROM (
+                    SELECT
+                        LOWER(TRIM(brand)) AS brand_norm,
+                        reference,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY LOWER(TRIM(brand))
+                            ORDER BY created_at DESC, id DESC
+                        ) AS rn
+                    FROM generated_articles
+                    WHERE tenant_id = ?
+                      AND brand IS NOT NULL
+                      AND TRIM(brand) <> ''
+                )
+                WHERE rn = 1
+                """,
+                (tenant_id,),
+            ).fetchall()
+        latest_references = {
+            _row_value(row, "brand_norm", 0): (_row_value(row, "reference", 1) or "")
+            for row in latest_rows
+            if _row_value(row, "brand_norm", 0) is not None
         }
 
         rows = []

@@ -7,6 +7,17 @@
 
 <form method="POST" enctype="multipart/form-data">
     <div class="form-group">
+        <label for="tenant_id">対象テナント</label>
+        <select id="tenant_id" name="tenant_id" required>
+            <option value="">選択してください</option>
+            {% for t in tenants %}
+            <option value="{{ t.id }}" {% if selected_tenant_id == t.id %}selected{% endif %}>
+                {{ t.name }} (id={{ t.id }})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="form-group">
         <label for="csv_file">CSVファイルを選択（UTF-8形式）</label>
         <input type="file" id="csv_file" name="csv_file" accept=".csv" required>
     </div>
