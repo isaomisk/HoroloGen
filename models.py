@@ -1,10 +1,110 @@
 import os
 import sqlite3
 import json
+import hashlib
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    func,
+    text,
+)
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "horologen.db")
+DEFAULT_DATABASE_URL = f"sqlite:///{DB_PATH}"
+
+
+# ----------------------------
+# SQLAlchemy (auth foundation)
+# ----------------------------
+def get_database_url() -> str:
+    return os.getenv("DATABASE_URL", "").strip() or DEFAULT_DATABASE_URL
+
+
+def _build_engine(url: str):
+    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+    return create_engine(url, future=True, pool_pre_ping=True, connect_args=connect_args)
+
+
+engine = _build_engine(get_database_url())
+AuthSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, future=True)
+Base = declarative_base()
+
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    plan = Column(String(1), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("plan IN ('A','B')", name="ck_tenants_plan"),
+    )
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True)
+    email = Column(String(255), nullable=False, unique=True)
+    role = Column(String(32), nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("role IN ('platform_admin','tenant_staff')", name="ck_users_role"),
+    )
+
+    tenant = relationship("Tenant")
+
+
+class LoginToken(Base):
+    __tablename__ = "login_tokens"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    ip = Column(String(255), nullable=True)
+    user_agent = Column(Text, nullable=True)
+
+    user = relationship("User")
+
+
+def get_auth_session():
+    return AuthSessionLocal()
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def hash_token(raw_token: str, secret: str) -> str:
+    # Pepper token with app secret to reduce reuse risk if DB hash leaks.
+    payload = f"{secret}:{raw_token}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _sqlite_connect(row_factory: bool = False):
+    conn = sqlite3.connect(DB_PATH)
+    if row_factory:
+        conn.row_factory = sqlite3.Row
+    return conn
 
 
 # 必須CSVカラム
@@ -17,7 +117,7 @@ REQUIRED_CSV_COLUMNS = [
 
 def init_db():
     """データベースを初期化"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _sqlite_connect()
     cursor = conn.cursor()
 
     # master_products テーブル
@@ -145,13 +245,11 @@ def init_db():
 
 def get_db_connection():
     """データベース接続を取得"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return _sqlite_connect(row_factory=True)
 
 
 def get_brands() -> list[str]:
-    conn = sqlite3.connect(DB_PATH)
+    conn = _sqlite_connect()
     try:
         rows = conn.execute(
             """
@@ -171,7 +269,7 @@ def get_references_by_brand(brand: str) -> tuple[int, list[str]]:
     if not brand:
         return 0, []
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = _sqlite_connect()
     try:
         item_rows = conn.execute(
             '''
@@ -255,7 +353,7 @@ def get_recent_generations(limit: int = 10) -> list[dict]:
 
 
 def get_total_product_count() -> int:
-    conn = sqlite3.connect(DB_PATH)
+    conn = _sqlite_connect()
     try:
         row = conn.execute(
             """
@@ -271,7 +369,7 @@ def get_total_product_count() -> int:
 
 
 def get_brand_summary_rows(month_start_iso: str, month_end_iso: str) -> list[dict]:
-    conn = sqlite3.connect(DB_PATH)
+    conn = _sqlite_connect()
     try:
         brands = get_brands()
 

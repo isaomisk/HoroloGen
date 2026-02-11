@@ -49,6 +49,10 @@
         .nav a:hover {
             background: #45a049;
         }
+        .inline-form {
+            display: inline-block;
+            margin: 0;
+        }
         .form-group {
             margin-bottom: 20px;
         }
@@ -190,8 +194,15 @@
 <body>
     <div class="container">
         <div class="nav">
-            <a href="{{ url_for('admin_upload') }}">Admin: CSVアップロード</a>
-            <a href="{{ url_for('staff_search') }}">Staff: 検索・オーバーライド</a>
+            {% if is_authenticated %}
+            <a href="{{ url_for('admin_root') }}">Admin: CSVアップロード</a>
+            <a href="{{ url_for('staff_root') }}">Staff: 検索・オーバーライド</a>
+            <form class="inline-form" method="POST" action="{{ url_for('auth_logout') }}">
+                <button type="submit" class="btn-secondary">ログアウト</button>
+            </form>
+            {% else %}
+            <a href="{{ url_for('auth_request') }}">ログイン</a>
+            {% endif %}
         </div>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
