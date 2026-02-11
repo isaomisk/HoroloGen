@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
 import json
 import csv
 import io
@@ -6,7 +6,11 @@ import os
 import binascii
 import sqlite3
 import time
+import secrets
 from datetime import datetime, timedelta
+from functools import wraps
+
+from sqlalchemy import select
 
 from models import (
     init_db,
@@ -17,6 +21,11 @@ from models import (
     get_recent_generations,
     get_total_product_count,
     get_brand_summary_rows,
+    get_auth_session,
+    hash_token,
+    now_utc,
+    User,
+    LoginToken,
 )
 import llm_client as llmc
 from url_discovery import discover_reference_urls
@@ -33,12 +42,18 @@ MONTHLY_LIMIT = int(os.getenv("HOROLOGEN_MONTHLY_LIMIT", "30"))
 # ----------------------------
 app = Flask(__name__)
 init_db()
-app.secret_key = os.getenv("HOROLOGEN_SECRET_KEY") or binascii.hexlify(os.urandom(32)).decode("ascii")
+app.secret_key = (
+    os.getenv("SECRET_KEY")
+    or os.getenv("HOROLOGEN_SECRET_KEY")
+    or binascii.hexlify(os.urandom(32)).decode("ascii")
+)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 BRANDS = ['cartier', 'omega', 'grand_seiko', 'iwc', 'panerai']
+MAGIC_LINK_TTL_MINUTES = 15
+AUTH_REQUEST_MESSAGE = "該当アカウントが存在する場合、ログインURLを送信しました。"
 
 
 def _flash_error_from_exception(e: Exception, context=None, category: str = "error") -> str:
@@ -53,6 +68,35 @@ def _flash_error_from_hint(hint: str, context=None, category: str = "error") -> 
     app.logger.error("error_id=%s context=%s hint=%s", error_id, context or {}, hint)
     flash(to_user_message(RuntimeError(hint), error_id), category)
     return error_id
+
+
+def _normalize_email(raw: str) -> str:
+    return (raw or "").strip().lower()
+
+
+def _build_client_ip() -> str:
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.remote_addr or ""
+
+
+def login_required(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("auth_request", next=request.path))
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
+@app.context_processor
+def inject_auth_context():
+    return {
+        "is_authenticated": bool(session.get("user_id")),
+        "current_user_email": session.get("user_email", ""),
+        "current_user_role": session.get("user_role", ""),
+    }
 
 
 # ----------------------------
@@ -213,12 +257,120 @@ def _build_history_rows(rows):
 # ----------------------------
 # Routes
 # ----------------------------
+@app.route('/auth/request', methods=['GET', 'POST'])
+def auth_request():
+    if request.method == 'POST':
+        email = _normalize_email(request.form.get('email', ''))
+        if email:
+            db = get_auth_session()
+            try:
+                user = db.execute(
+                    select(User).where(
+                        User.email == email,
+                        User.is_active.is_(True),
+                    )
+                ).scalar_one_or_none()
+
+                if user:
+                    raw_token = secrets.token_urlsafe(32)
+                    token = LoginToken(
+                        user_id=user.id,
+                        token_hash=hash_token(raw_token, app.secret_key),
+                        expires_at=now_utc() + timedelta(minutes=MAGIC_LINK_TTL_MINUTES),
+                        ip=_build_client_ip()[:255],
+                        user_agent=(request.user_agent.string or "")[:1000],
+                    )
+                    db.add(token)
+                    db.commit()
+
+                    verify_url = url_for('auth_verify', token=raw_token, _external=True)
+                    app.logger.info("magic_link email=%s verify_url=%s", user.email, verify_url)
+                    print(f"[MAGIC_LINK] {verify_url}")
+            except Exception as e:
+                db.rollback()
+                log_exception(app.logger, e, make_error_id(), {"route": "auth_request"})
+            finally:
+                db.close()
+
+        flash(AUTH_REQUEST_MESSAGE, 'success')
+        return redirect(url_for('auth_request'))
+
+    return render_template('auth_request.html')
+
+
+@app.route('/auth/verify')
+def auth_verify():
+    raw_token = request.args.get('token', '').strip()
+    if not raw_token:
+        flash('ログインURLが不正です。', 'warning')
+        return redirect(url_for('auth_request'))
+
+    db = get_auth_session()
+    try:
+        token = db.execute(
+            select(LoginToken).where(
+                LoginToken.token_hash == hash_token(raw_token, app.secret_key),
+                LoginToken.used_at.is_(None),
+                LoginToken.expires_at >= now_utc(),
+            )
+        ).scalar_one_or_none()
+
+        if not token:
+            flash('ログインURLの有効期限切れ、または既に使用済みです。', 'warning')
+            return redirect(url_for('auth_request'))
+
+        user = db.get(User, token.user_id)
+        if not user or not user.is_active:
+            flash('アカウントが無効です。', 'warning')
+            return redirect(url_for('auth_request'))
+
+        token.used_at = now_utc()
+        db.add(token)
+        db.commit()
+
+        session.clear()
+        session['user_id'] = user.id
+        session['user_email'] = user.email
+        session['user_role'] = user.role
+        session['tenant_id'] = user.tenant_id
+
+        return redirect(url_for('staff_search'))
+    except Exception as e:
+        db.rollback()
+        _flash_error_from_exception(e, {"route": "auth_verify"})
+        return redirect(url_for('auth_request'))
+    finally:
+        db.close()
+
+
+@app.route('/auth/logout', methods=['POST'])
+def auth_logout():
+    session.clear()
+    flash('ログアウトしました。', 'success')
+    return redirect(url_for('auth_request'))
+
+
 @app.route('/')
 def index():
+    if session.get("user_id"):
+        return redirect(url_for('staff_search'))
+    return redirect(url_for('auth_request'))
+
+
+@app.route('/admin')
+@login_required
+def admin_root():
     return redirect(url_for('admin_upload'))
 
 
+@app.route('/staff')
+@login_required
+def staff_root():
+    return redirect(url_for('staff_search'))
+
+
 @app.route('/admin/upload', methods=['GET', 'POST'])
+@login_required
 def admin_upload():
     if request.method == 'POST':
         file = request.files.get('csv_file')
@@ -434,6 +586,7 @@ def admin_upload():
 
 
 @app.route('/staff/references', methods=['GET'])
+@login_required
 def staff_references():
     brand = request.args.get('brand', '').strip()
     if not brand:
@@ -444,6 +597,7 @@ def staff_references():
 
 
 @app.route('/staff/search', methods=['GET', 'POST'])
+@login_required
 def staff_search():
     fields = [
         'price_jpy', 'case_size_mm', 'movement', 'case_material',

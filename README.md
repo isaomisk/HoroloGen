@@ -95,6 +95,13 @@ venv/ # ローカル環境
 - `HOROLOGEN_CLAUDE_MODEL`  
   デフォルト: `claude-sonnet-4-5`
 
+### 任意（Webサービス基盤）
+- `DATABASE_URL`  
+  本番想定: `postgresql://user:pass@host:5432/dbname`  
+  未設定時はローカル `horologen.db`（SQLite）へフォールバック
+- `SECRET_KEY`  
+  セッション用。未設定時は `HOROLOGEN_SECRET_KEY` を使用
+
 ### 任意（プラン/上限）
 - `HOROLOGEN_PLAN`  
   `limited` / `unlimited`（デフォルト: `limited`）
@@ -115,11 +122,33 @@ requirements.txt を作る場合は pip freeze > requirements.txt 推奨。
 
 3) 環境変数設定（例）
 export ANTHROPIC_API_KEY="..."
+export DATABASE_URL="postgresql://user:pass@host:5432/dbname"
+export SECRET_KEY="replace-with-strong-secret"
 export HOROLOGEN_CLAUDE_MODEL="claude-sonnet-4-5"
 export HOROLOGEN_PLAN="limited"
 export HOROLOGEN_MONTHLY_LIMIT="30"
 4) 起動
 python app.py
+
+## 認証基盤（最小）動作確認
+
+```bash
+# DBマイグレーション
+export DATABASE_URL="postgresql://user:pass@host:5432/dbname"
+alembic upgrade head
+
+# テストユーザー作成（例）
+psql "$DATABASE_URL" -c "INSERT INTO tenants (name, plan) VALUES ('Demo Tenant','A') RETURNING id;"
+psql "$DATABASE_URL" -c "INSERT INTO users (tenant_id, email, role, is_active) VALUES (1, 'staff@example.com', 'tenant_staff', true) ON CONFLICT (email) DO NOTHING;"
+
+# アプリ起動
+python app.py
+
+# ログインURL発行（常に同じレスポンス）
+curl -X POST -d "email=staff@example.com" http://127.0.0.1:5000/auth/request
+```
+
+サーバーログに `[MAGIC_LINK] http://127.0.0.1:5000/auth/verify?token=...` が出るので、開くと `/staff/search` へ遷移します。
 DB（SQLite）概要
 主なテーブル
 master_products
