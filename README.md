@@ -149,6 +149,12 @@ curl -X POST -d "email=staff@example.com" http://127.0.0.1:5000/auth/request
 ```
 
 サーバーログに `[MAGIC_LINK] http://127.0.0.1:5000/auth/verify?token=...` が出るので、開くと `/staff/search` へ遷移します。
+
+## テナント分離（最小）
+
+- `master_products` / `product_overrides` / `generated_articles` は `tenant_id` で分離されます。
+- staff 画面 (`/staff/*`) はログインユーザーの `tenant_id` のデータだけ参照・保存します。
+- admin CSVアップロード (`/admin/upload`) は対象テナント選択が必須です。
 DB（SQLite）概要
 主なテーブル
 master_products

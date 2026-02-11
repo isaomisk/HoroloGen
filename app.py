@@ -22,8 +22,10 @@ from models import (
     get_total_product_count,
     get_brand_summary_rows,
     get_auth_session,
+    get_database_url,
     hash_token,
     now_utc,
+    Tenant,
     User,
     LoginToken,
 )
@@ -99,6 +101,39 @@ def inject_auth_context():
     }
 
 
+def _get_current_tenant_id() -> int | None:
+    raw = session.get("tenant_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _staff_tenant_or_redirect():
+    tenant_id = _get_current_tenant_id()
+    if tenant_id is None:
+        flash("テナント未所属のため staff 機能を利用できません。", "warning")
+        return None, redirect(url_for("auth_request"))
+    return tenant_id, None
+
+
+def _staff_tenant_or_403_json():
+    tenant_id = _get_current_tenant_id()
+    if tenant_id is None:
+        return None, (jsonify({"error": "tenant_required"}), 403)
+    return tenant_id, None
+
+
+def _load_tenant_options() -> list[Tenant]:
+    db = get_auth_session()
+    try:
+        return list(db.execute(select(Tenant).order_by(Tenant.name.asc(), Tenant.id.asc())).scalars())
+    finally:
+        db.close()
+
+
 # ----------------------------
 # Quota helpers (service-wide monthly limit)
 # ----------------------------
@@ -131,7 +166,10 @@ def consume_quota_or_block(n: int = 1) -> tuple[bool, str]:
 
     conn = get_db_connection()
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        if get_database_url().startswith("postgresql"):
+            conn.execute("BEGIN")
+        else:
+            conn.execute("BEGIN IMMEDIATE")
         mk = _month_key_jst()
 
         row = conn.execute(
@@ -198,10 +236,10 @@ def _month_range_jst_from_key(month_key: str) -> tuple[str, str]:
     return start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def get_brand_summary_view(month_key: str) -> tuple[int, list[dict]]:
+def get_brand_summary_view(month_key: str, tenant_id: int | None = None) -> tuple[int, list[dict]]:
     start_iso, end_iso = _month_range_jst_from_key(month_key)
-    total = get_total_product_count()
-    rows = get_brand_summary_rows(start_iso, end_iso)
+    total = get_total_product_count(tenant_id=tenant_id)
+    rows = get_brand_summary_rows(start_iso, end_iso, tenant_id=tenant_id)
     return total, rows
 
 
@@ -372,7 +410,21 @@ def staff_root():
 @app.route('/admin/upload', methods=['GET', 'POST'])
 @login_required
 def admin_upload():
+    tenant_options = _load_tenant_options()
+    tenant_ids = {t.id for t in tenant_options}
+    selected_tenant_id_raw = (request.form.get("tenant_id") if request.method == "POST" else request.args.get("tenant_id", "")).strip()
+    selected_tenant_id = None
+    if selected_tenant_id_raw:
+        try:
+            selected_tenant_id = int(selected_tenant_id_raw)
+        except ValueError:
+            selected_tenant_id = None
+
     if request.method == 'POST':
+        if selected_tenant_id is None or selected_tenant_id not in tenant_ids:
+            _flash_error_from_hint("tenant invalid", {"route": "admin_upload", "tenant_id": selected_tenant_id_raw})
+            return redirect(url_for('admin_upload'))
+
         file = request.files.get('csv_file')
 
         if not file or file.filename == '':
@@ -444,14 +496,14 @@ def admin_upload():
 
                 try:
                     cursor.execute(
-                        "SELECT * FROM master_products WHERE brand = ? AND reference = ?",
-                        (brand, reference)
+                        "SELECT * FROM master_products WHERE tenant_id = ? AND brand = ? AND reference = ?",
+                        (selected_tenant_id, brand, reference)
                     )
                     existing = cursor.fetchone()
 
                     cursor.execute(
-                        "SELECT 1 FROM product_overrides WHERE brand = ? AND reference = ?",
-                        (brand, reference)
+                        "SELECT 1 FROM product_overrides WHERE tenant_id = ? AND brand = ? AND reference = ?",
+                        (selected_tenant_id, brand, reference)
                     )
                     override_exists = cursor.fetchone() is not None
 
@@ -484,11 +536,11 @@ def admin_upload():
 
                     cursor.execute('''
                         INSERT INTO master_products
-                        (brand, reference, price_jpy, case_size_mm, movement, case_material,
+                        (tenant_id, brand, reference, price_jpy, case_size_mm, movement, case_material,
                          bracelet_strap, dial_color, water_resistance_m, buckle, warranty_years,
                          collection, movement_caliber, case_thickness_mm, lug_width_mm, remarks, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                        ON CONFLICT(brand, reference) DO UPDATE SET
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(tenant_id, brand, reference) DO UPDATE SET
                             price_jpy = excluded.price_jpy,
                             case_size_mm = excluded.case_size_mm,
                             movement = excluded.movement,
@@ -505,7 +557,7 @@ def admin_upload():
                             remarks = excluded.remarks,
                             updated_at = CURRENT_TIMESTAMP
                     ''', (
-                        brand, reference, data['price_jpy'], data['case_size_mm'],
+                        selected_tenant_id, brand, reference, data['price_jpy'], data['case_size_mm'],
                         data['movement'], data['case_material'], data['bracelet_strap'],
                         data['dial_color'], data['water_resistance_m'], data['buckle'],
                         data['warranty_years'], data['collection'], data['movement_caliber'],
@@ -517,7 +569,7 @@ def admin_upload():
                     else:
                         inserted_count += 1
 
-                except sqlite3.Error as e:
+                except Exception as e:
                     error_count += 1
                     error_details.append(f'行{row_num}: データベースエラー - {str(e)}')
 
@@ -566,7 +618,7 @@ def admin_upload():
             except Exception:
                 pass
 
-        return redirect(url_for('admin_upload'))
+        return redirect(url_for('admin_upload', tenant_id=selected_tenant_id))
 
     conn = get_db_connection()
     latest_upload = conn.execute('''
@@ -582,23 +634,37 @@ def admin_upload():
             sample_diffs = None
 
     conn.close()
-    return render_template('admin.html', latest_upload=latest_upload, sample_diffs=sample_diffs)
+    return render_template(
+        'admin.html',
+        latest_upload=latest_upload,
+        sample_diffs=sample_diffs,
+        tenants=tenant_options,
+        selected_tenant_id=selected_tenant_id,
+    )
 
 
 @app.route('/staff/references', methods=['GET'])
 @login_required
 def staff_references():
+    tenant_id, err = _staff_tenant_or_403_json()
+    if err:
+        return err
+
     brand = request.args.get('brand', '').strip()
     if not brand:
         return jsonify({"brand": "", "count": 0, "items": []})
 
-    count, items = get_references_by_brand(brand)
+    count, items = get_references_by_brand(brand, tenant_id=tenant_id)
     return jsonify({"brand": brand, "count": count, "items": items})
 
 
 @app.route('/staff/search', methods=['GET', 'POST'])
 @login_required
 def staff_search():
+    tenant_id, redirect_response = _staff_tenant_or_redirect()
+    if redirect_response:
+        return redirect_response
+
     fields = [
         'price_jpy', 'case_size_mm', 'movement', 'case_material',
         'bracelet_strap', 'dial_color', 'water_resistance_m', 'buckle',
@@ -619,7 +685,7 @@ def staff_search():
     }
 
     mk0, _, _ = get_quota_view()
-    total_product_count, brand_summaries = get_brand_summary_view(mk0)
+    total_product_count, brand_summaries = get_brand_summary_view(mk0, tenant_id=tenant_id)
     summary_defaults = {
         "total_product_count": total_product_count,
         "brand_summaries": brand_summaries,
@@ -635,8 +701,8 @@ def staff_search():
                 mk, used, rem = get_quota_view()
                 return render_template(
                     'search.html',
-                    brands=get_brands(),
-                    recent_generations=get_recent_generations(limit=10),
+                    brands=get_brands(tenant_id=tenant_id),
+                    recent_generations=get_recent_generations(limit=10, tenant_id=tenant_id),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
                     **summary_defaults,
                     **debug_defaults
@@ -650,8 +716,8 @@ def staff_search():
                 mk, used, rem = get_quota_view()
                 return render_template(
                     'search.html',
-                    brands=get_brands(),
-                    recent_generations=get_recent_generations(limit=10),
+                    brands=get_brands(tenant_id=tenant_id),
+                    recent_generations=get_recent_generations(limit=10, tenant_id=tenant_id),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
                     **summary_defaults,
                     **debug_defaults
@@ -663,40 +729,45 @@ def staff_search():
             data['editor_note'] = request.form.get('editor_note', '').strip()
 
             conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO product_overrides
-                (brand, reference, price_jpy, case_size_mm, movement, case_material,
-                 bracelet_strap, dial_color, water_resistance_m, buckle, warranty_years,
-                 collection, movement_caliber, case_thickness_mm, lug_width_mm, remarks, editor_note, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(brand, reference) DO UPDATE SET
-                    price_jpy = excluded.price_jpy,
-                    case_size_mm = excluded.case_size_mm,
-                    movement = excluded.movement,
-                    case_material = excluded.case_material,
-                    bracelet_strap = excluded.bracelet_strap,
-                    dial_color = excluded.dial_color,
-                    water_resistance_m = excluded.water_resistance_m,
-                    buckle = excluded.buckle,
-                    warranty_years = excluded.warranty_years,
-                    collection = excluded.collection,
-                    movement_caliber = excluded.movement_caliber,
-                    case_thickness_mm = excluded.case_thickness_mm,
-                    lug_width_mm = excluded.lug_width_mm,
-                    remarks = excluded.remarks,
-                    editor_note = excluded.editor_note,
-                    updated_at = CURRENT_TIMESTAMP
-            ''', (
-                data['brand'], data['reference'], data['price_jpy'], data['case_size_mm'],
-                data['movement'], data['case_material'], data['bracelet_strap'],
-                data['dial_color'], data['water_resistance_m'], data['buckle'],
-                data['warranty_years'], data['collection'], data['movement_caliber'],
-                data['case_thickness_mm'], data['lug_width_mm'], data['remarks'],
-                data['editor_note']
-            ))
-            conn.commit()
-            conn.close()
+            try:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO product_overrides
+                    (tenant_id, brand, reference, price_jpy, case_size_mm, movement, case_material,
+                     bracelet_strap, dial_color, water_resistance_m, buckle, warranty_years,
+                     collection, movement_caliber, case_thickness_mm, lug_width_mm, remarks, editor_note, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(tenant_id, brand, reference) DO UPDATE SET
+                        price_jpy = excluded.price_jpy,
+                        case_size_mm = excluded.case_size_mm,
+                        movement = excluded.movement,
+                        case_material = excluded.case_material,
+                        bracelet_strap = excluded.bracelet_strap,
+                        dial_color = excluded.dial_color,
+                        water_resistance_m = excluded.water_resistance_m,
+                        buckle = excluded.buckle,
+                        warranty_years = excluded.warranty_years,
+                        collection = excluded.collection,
+                        movement_caliber = excluded.movement_caliber,
+                        case_thickness_mm = excluded.case_thickness_mm,
+                        lug_width_mm = excluded.lug_width_mm,
+                        remarks = excluded.remarks,
+                        editor_note = excluded.editor_note,
+                        updated_at = CURRENT_TIMESTAMP
+                ''', (
+                    tenant_id, data['brand'], data['reference'], data['price_jpy'], data['case_size_mm'],
+                    data['movement'], data['case_material'], data['bracelet_strap'],
+                    data['dial_color'], data['water_resistance_m'], data['buckle'],
+                    data['warranty_years'], data['collection'], data['movement_caliber'],
+                    data['case_thickness_mm'], data['lug_width_mm'], data['remarks'],
+                    data['editor_note']
+                ))
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
             flash('オーバーライドを保存しました', 'success')
             return redirect(url_for('staff_search', brand=brand, reference=reference))
@@ -709,12 +780,17 @@ def staff_search():
                 return redirect(url_for('staff_search'))
 
             conn = get_db_connection()
-            conn.execute('''
-                DELETE FROM product_overrides
-                WHERE brand = ? AND reference = ?
-            ''', (brand, reference))
-            conn.commit()
-            conn.close()
+            try:
+                conn.execute('''
+                    DELETE FROM product_overrides
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                ''', (tenant_id, brand, reference))
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
             flash('オーバーライドを解除しました（マスタに戻しました）', 'success')
             return redirect(url_for('staff_search', brand=brand, reference=reference))
@@ -744,44 +820,49 @@ def staff_search():
                 reference_urls = raw_urls[:3]
 
             conn = get_db_connection()
-            master = conn.execute('''
-                SELECT * FROM master_products
-                WHERE brand = ? AND reference = ?
-            ''', (brand, reference)).fetchone()
+            try:
+                master = conn.execute('''
+                    SELECT * FROM master_products
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                ''', (tenant_id, brand, reference)).fetchone()
 
-            override = conn.execute('''
-                SELECT * FROM product_overrides
-                WHERE brand = ? AND reference = ?
-            ''', (brand, reference)).fetchone()
-
-            saved_editor_note = (
-                override['editor_note']
-                if override and 'editor_note' in override.keys() and override['editor_note']
-                else ''
-            )
-            if editor_note_in_form and editor_note_in_form != saved_editor_note:
-                conn.execute('''
-                    INSERT INTO product_overrides (brand, reference, editor_note, updated_at)
-                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(brand, reference) DO UPDATE SET
-                        editor_note = excluded.editor_note,
-                        updated_at = CURRENT_TIMESTAMP
-                ''', (brand, reference, editor_note_in_form))
-                conn.commit()
                 override = conn.execute('''
                     SELECT * FROM product_overrides
-                    WHERE brand = ? AND reference = ?
-                ''', (brand, reference)).fetchone()
-                flash("スタッフの体験談を追加して文章を生成します", "warning")
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                ''', (tenant_id, brand, reference)).fetchone()
 
-            canonical = {}
-            for f in fields:
-                ov = override[f] if override and override[f] else ''
-                ms = master[f] if master and master[f] else ''
-                canonical[f] = ov if ov else ms
+                saved_editor_note = (
+                    override['editor_note']
+                    if override and 'editor_note' in override.keys() and override['editor_note']
+                    else ''
+                )
+                if editor_note_in_form and editor_note_in_form != saved_editor_note:
+                    conn.execute('''
+                        INSERT INTO product_overrides (tenant_id, brand, reference, editor_note, updated_at)
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(tenant_id, brand, reference) DO UPDATE SET
+                            editor_note = excluded.editor_note,
+                            updated_at = CURRENT_TIMESTAMP
+                    ''', (tenant_id, brand, reference, editor_note_in_form))
+                    conn.commit()
+                    override = conn.execute('''
+                        SELECT * FROM product_overrides
+                        WHERE tenant_id = ? AND brand = ? AND reference = ?
+                    ''', (tenant_id, brand, reference)).fetchone()
+                    flash("スタッフの体験談を追加して文章を生成します", "warning")
 
-            editor_note = (override['editor_note'] if override and 'editor_note' in override.keys() and override['editor_note'] else '')
-            conn.close()
+                canonical = {}
+                for f in fields:
+                    ov = override[f] if override and override[f] else ''
+                    ms = master[f] if master and master[f] else ''
+                    canonical[f] = ov if ov else ms
+
+                editor_note = (override['editor_note'] if override and 'editor_note' in override.keys() and override['editor_note'] else '')
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
             tone_ui = request.form.get('tone', 'practical').strip()
             tone_map = {
@@ -844,6 +925,7 @@ def staff_search():
             payload["elapsed_ms"] = int(round((generation_elapsed_sec or 0) * 1000))
 
             saved_article_id = None
+            conn_save = None
             try:
                 conn_save = get_db_connection()
 
@@ -853,9 +935,11 @@ def staff_search():
 
                 cur = conn_save.execute("""
                     INSERT INTO generated_articles
-                    (brand, reference, payload_json, intro_text, specs_text, rewrite_depth, rewrite_parent_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (tenant_id, brand, reference, payload_json, intro_text, specs_text, rewrite_depth, rewrite_parent_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
                 """, (
+                    tenant_id,
                     brand,
                     reference,
                     json.dumps(payload, ensure_ascii=False),
@@ -865,47 +949,63 @@ def staff_search():
                     None
                 ))
                 conn_save.commit()
-                saved_article_id = cur.lastrowid
-                conn_save.close()
+                inserted = cur.fetchone()
+                if isinstance(inserted, dict):
+                    saved_article_id = inserted.get("id")
+                elif inserted:
+                    saved_article_id = inserted[0]
+                else:
+                    saved_article_id = getattr(cur, "lastrowid", None)
             except Exception as e:
                 _flash_error_from_exception(e, {"route": "staff_search", "action": "save_generated_article", "brand": brand, "reference": reference})
+            finally:
+                try:
+                    if conn_save:
+                        conn_save.close()
+                except Exception:
+                    pass
 
             conn = get_db_connection()
-            master = conn.execute('''
-                SELECT * FROM master_products
-                WHERE brand = ? AND reference = ?
-            ''', (brand, reference)).fetchone()
+            try:
+                master = conn.execute('''
+                    SELECT * FROM master_products
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                ''', (tenant_id, brand, reference)).fetchone()
 
-            override = conn.execute('''
-                SELECT * FROM product_overrides
-                WHERE brand = ? AND reference = ?
-            ''', (brand, reference)).fetchone()
+                override = conn.execute('''
+                    SELECT * FROM product_overrides
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                ''', (tenant_id, brand, reference)).fetchone()
 
-            canonical = {}
-            overridden_fields = set()
-            for f in fields:
-                ov = override[f] if override and override[f] else ''
-                ms = master[f] if master and master[f] else ''
-                canonical[f] = ov if ov else ms
-                if ov:
-                    overridden_fields.add(f)
+                canonical = {}
+                overridden_fields = set()
+                for f in fields:
+                    ov = override[f] if override and override[f] else ''
+                    ms = master[f] if master and master[f] else ''
+                    canonical[f] = ov if ov else ms
+                    if ov:
+                        overridden_fields.add(f)
 
-            history_rows = conn.execute("""
-                SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
-                FROM generated_articles
-                WHERE brand = ? AND reference = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT 5
-            """, (brand, reference)).fetchall()
-            conn.close()
+                history_rows = conn.execute("""
+                    SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
+                    FROM generated_articles
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 5
+                """, (tenant_id, brand, reference)).fetchall()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             history = _build_history_rows(history_rows)
 
             mk, used, rem = get_quota_view()
 
             return render_template(
                 'search.html',
-                brands=get_brands(),
-                recent_generations=get_recent_generations(limit=10),
+                brands=get_brands(tenant_id=tenant_id),
+                recent_generations=get_recent_generations(limit=10, tenant_id=tenant_id),
                 brand=brand,
                 reference=reference,
                 master=master,
@@ -959,8 +1059,8 @@ def staff_search():
 
             conn = get_db_connection()
             row = conn.execute(
-                "SELECT * FROM generated_articles WHERE id = ?",
-                (int(source_article_id),)
+                "SELECT * FROM generated_articles WHERE id = ? AND tenant_id = ?",
+                (int(source_article_id), tenant_id)
             ).fetchone()
 
             if not row:
@@ -976,8 +1076,8 @@ def staff_search():
 
             # Server-side guard: same source id can be rewritten only once
             already = conn.execute(
-                "SELECT 1 FROM generated_articles WHERE rewrite_parent_id = ? LIMIT 1",
-                (int(source_article_id),)
+                "SELECT 1 FROM generated_articles WHERE rewrite_parent_id = ? AND tenant_id = ? LIMIT 1",
+                (int(source_article_id), tenant_id)
             ).fetchone()
             if already:
                 conn.close()
@@ -1026,9 +1126,11 @@ def staff_search():
 
             cur = conn.execute("""
                 INSERT INTO generated_articles
-                (brand, reference, payload_json, intro_text, specs_text, rewrite_depth, rewrite_parent_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (tenant_id, brand, reference, payload_json, intro_text, specs_text, rewrite_depth, rewrite_parent_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
             """, (
+                tenant_id,
                 brand,
                 reference,
                 json.dumps(payload, ensure_ascii=False),
@@ -1038,44 +1140,55 @@ def staff_search():
                 int(source_article_id)
             ))
             conn.commit()
-            saved_article_id = cur.lastrowid
+            inserted = cur.fetchone()
+            if isinstance(inserted, dict):
+                saved_article_id = inserted.get("id")
+            elif inserted:
+                saved_article_id = inserted[0]
+            else:
+                saved_article_id = getattr(cur, "lastrowid", None)
 
-            master = conn.execute('''
-                SELECT * FROM master_products
-                WHERE brand = ? AND reference = ?
-            ''', (brand, reference)).fetchone()
+            try:
+                master = conn.execute('''
+                    SELECT * FROM master_products
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                ''', (tenant_id, brand, reference)).fetchone()
 
-            override = conn.execute('''
-                SELECT * FROM product_overrides
-                WHERE brand = ? AND reference = ?
-            ''', (brand, reference)).fetchone()
+                override = conn.execute('''
+                    SELECT * FROM product_overrides
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                ''', (tenant_id, brand, reference)).fetchone()
 
-            canonical = {}
-            overridden_fields = set()
-            for f in fields:
-                ov = override[f] if override and override[f] else ''
-                ms = master[f] if master and master[f] else ''
-                canonical[f] = ov if ov else ms
-                if ov:
-                    overridden_fields.add(f)
+                canonical = {}
+                overridden_fields = set()
+                for f in fields:
+                    ov = override[f] if override and override[f] else ''
+                    ms = master[f] if master and master[f] else ''
+                    canonical[f] = ov if ov else ms
+                    if ov:
+                        overridden_fields.add(f)
 
-            history_rows = conn.execute("""
-                SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
-                FROM generated_articles
-                WHERE brand = ? AND reference = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT 5
-            """, (brand, reference)).fetchall()
+                history_rows = conn.execute("""
+                    SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
+                    FROM generated_articles
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 5
+                """, (tenant_id, brand, reference)).fetchall()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
-            conn.close()
             history = _build_history_rows(history_rows)
 
             mk, used, rem = get_quota_view()
 
             return render_template(
                 'search.html',
-                brands=get_brands(),
-                recent_generations=get_recent_generations(limit=10),
+                brands=get_brands(tenant_id=tenant_id),
+                recent_generations=get_recent_generations(limit=10, tenant_id=tenant_id),
                 brand=brand,
                 reference=reference,
                 master=master,
@@ -1146,47 +1259,50 @@ def staff_search():
 
     if brand and reference:
         conn = get_db_connection()
+        try:
+            master = conn.execute('''
+                SELECT * FROM master_products
+                WHERE tenant_id = ? AND brand = ? AND reference = ?
+            ''', (tenant_id, brand, reference)).fetchone()
 
-        master = conn.execute('''
-            SELECT * FROM master_products
-            WHERE brand = ? AND reference = ?
-        ''', (brand, reference)).fetchone()
+            override = conn.execute('''
+                SELECT * FROM product_overrides
+                WHERE tenant_id = ? AND brand = ? AND reference = ?
+            ''', (tenant_id, brand, reference)).fetchone()
 
-        override = conn.execute('''
-            SELECT * FROM product_overrides
-            WHERE brand = ? AND reference = ?
-        ''', (brand, reference)).fetchone()
+            for f in fields:
+                ov = override[f] if override and override[f] else ''
+                ms = master[f] if master and master[f] else ''
+                canonical[f] = ov if ov else ms
+                if ov:
+                    overridden_fields.add(f)
 
-        for f in fields:
-            ov = override[f] if override and override[f] else ''
-            ms = master[f] if master and master[f] else ''
-            canonical[f] = ov if ov else ms
-            if ov:
-                overridden_fields.add(f)
+            if not master:
+                warnings.append('商品マスタに存在しません。任意入力してください')
+            if not canonical.get('price_jpy'):
+                warnings.append('price_jpyがマスタとオーバーライドの両方で空です')
 
-        if not master:
-            warnings.append('商品マスタに存在しません。任意入力してください')
-        if not canonical.get('price_jpy'):
-            warnings.append('price_jpyがマスタとオーバーライドの両方で空です')
+            if override:
+                override_warning = 'この商品にはオーバーライドが設定されています'
 
-        if override:
-            override_warning = 'この商品にはオーバーライドが設定されています'
-
-        history_rows = conn.execute("""
-            SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
-            FROM generated_articles
-            WHERE brand = ? AND reference = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT 5
-        """, (brand, reference)).fetchall()
-
-        conn.close()
+            history_rows = conn.execute("""
+                SELECT id, intro_text, specs_text, payload_json, created_at, rewrite_depth, rewrite_parent_id
+                FROM generated_articles
+                WHERE tenant_id = ? AND brand = ? AND reference = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 5
+            """, (tenant_id, brand, reference)).fetchall()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
         history = _build_history_rows(history_rows)
 
     return render_template(
         'search.html',
-        brands=get_brands(),
-        recent_generations=get_recent_generations(limit=10),
+        brands=get_brands(tenant_id=tenant_id),
+        recent_generations=get_recent_generations(limit=10, tenant_id=tenant_id),
         brand=brand,
         reference=reference,
         master=master,
