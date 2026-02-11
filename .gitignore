@@ -31,3 +31,6 @@ horologen.db.malformed
 .venv/
 horologen.db
 horologen.db.malformed
+
+# local trash (do not commit)
+_local_trash_*/
