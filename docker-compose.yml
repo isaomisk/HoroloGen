@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16
+    container_name: horologen-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: horologen
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d horologen"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - horologen_pgdata:/var/lib/postgresql/data
+
+volumes:
+  horologen_pgdata:

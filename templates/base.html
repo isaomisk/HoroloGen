@@ -52,6 +52,22 @@
         .inline-form {
             display: inline-block;
             margin: 0;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        .nav-note {
+            display: inline-block;
+            margin-right: 10px;
+            color: #856404;
+            font-size: 13px;
+        }
+        .nav-tenant-select {
+            width: auto;
+            min-width: 180px;
+            margin-right: 6px;
+            padding: 8px;
+            display: inline-block;
+            vertical-align: middle;
         }
         .form-group {
             margin-bottom: 20px;
@@ -195,8 +211,24 @@
     <div class="container">
         <div class="nav">
             {% if is_authenticated %}
+            {% if can_access_admin %}
             <a href="{{ url_for('admin_root') }}">Admin: CSVアップロード</a>
+            {% endif %}
             <a href="{{ url_for('staff_root') }}">Staff: 検索・オーバーライド</a>
+            {% if is_admin %}
+            <form class="inline-form" method="GET" action="{{ url_for('staff_search') }}">
+                <select class="nav-tenant-select" name="tenant_id" aria-label="Staff表示テナント">
+                    <option value="">テナント選択</option>
+                    {% for t in admin_tenant_options %}
+                    <option value="{{ t.id }}" {% if staff_tenant_id == t.id %}selected{% endif %}>{{ t.name }} (ID: {{ t.id }})</option>
+                    {% endfor %}
+                </select>
+                <button type="submit">Staff対象を適用</button>
+            </form>
+            {% if not staff_tenant_id %}
+            <span class="nav-note">Staff利用にはテナント選択が必要です。</span>
+            {% endif %}
+            {% endif %}
             <form class="inline-form" method="POST" action="{{ url_for('auth_logout') }}">
                 <button type="submit" class="btn-secondary">ログアウト</button>
             </form>

@@ -13,10 +13,18 @@ from typing import Tuple, Optional, Dict, Any, List
 # Anthropic client
 # ----------------------------
 MODEL = os.getenv("HOROLOGEN_CLAUDE_MODEL", "claude-sonnet-4-5")
-_api_key = os.getenv("ANTHROPIC_API_KEY")
-if not _api_key:
-    raise RuntimeError("ANTHROPIC_API_KEY が未設定です（export してから起動してください）")
-client = Anthropic(api_key=_api_key)
+_client: Optional[Anthropic] = None
+
+
+def _get_client() -> Anthropic:
+    global _client
+    if _client is not None:
+        return _client
+    api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY が未設定です")
+    _client = Anthropic(api_key=api_key)
+    return _client
 
 
 # ----------------------------
@@ -736,6 +744,8 @@ def similarity_level(pct: int) -> str:
 #   "auto"  : 類似が高いときだけ1回だけ言い換え
 # ----------------------------
 def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, str, Dict[str, Any]]:
+    client = _get_client()
+
     product = payload.get("product", {}) or {}
     ref_code = (product.get("reference") or "").strip()
 

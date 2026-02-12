@@ -28,6 +28,29 @@
   <p>ブランドとリファレンスを指定して、仕様確認・記事生成・オーバーライド編集を行えます。</p>
 </div>
 
+{% if is_admin %}
+<section class="v0-card v0-card-search">
+  <h2><span class="v0-title-icon"><i data-lucide="users"></i></span>Staff表示テナント</h2>
+  <form method="GET" class="v0-search-form">
+    <div class="form-group v0-field">
+      <label for="tenant_id">対象テナント</label>
+      <select id="tenant_id" name="tenant_id">
+        <option value="">選択してください</option>
+        {% for t in admin_tenant_options %}
+        <option value="{{ t.id }}" {% if staff_tenant_id == t.id %}selected{% endif %}>{{ t.name }} (ID: {{ t.id }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="v0-primary-btn">適用</button>
+  </form>
+</section>
+{% endif %}
+
+{% if staff_tenant_missing %}
+<div class="alert alert-warning">テナントを選択してください。</div>
+{% endif %}
+
+{% if not staff_tenant_missing %}
 <section class="v0-card v0-card-search">
 <h2><span class="v0-title-icon"><i data-lucide="search"></i></span>検索</h2>
 <form method="POST" class="v0-search-form">
@@ -751,6 +774,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }, msToNextSecond);
 })();
 </script>
+{% endif %}
 
 </div>
 {% endblock %}
