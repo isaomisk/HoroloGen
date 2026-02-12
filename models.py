@@ -352,7 +352,7 @@ def get_brands(tenant_id: int | None = None) -> list[str]:
         if tenant_id is None:
             cur.execute(
                 """
-                SELECT DISTINCT LOWER(TRIM(brand)) AS brand
+                SELECT DISTINCT UPPER(TRIM(brand)) AS brand
                 FROM master_products
                 WHERE brand IS NOT NULL
                   AND TRIM(brand) <> ''
@@ -362,7 +362,7 @@ def get_brands(tenant_id: int | None = None) -> list[str]:
         else:
             cur.execute(
                 """
-                SELECT DISTINCT LOWER(TRIM(brand)) AS brand
+                SELECT DISTINCT UPPER(TRIM(brand)) AS brand
                 FROM master_products
                 WHERE tenant_id = ?
                   AND brand IS NOT NULL

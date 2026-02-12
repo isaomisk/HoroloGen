@@ -76,6 +76,14 @@ def _normalize_email(raw: str) -> str:
     return (raw or "").strip().lower()
 
 
+def normalize_brand(raw: str) -> str:
+    return (raw or "").strip().upper()
+
+
+def normalize_reference(raw: str) -> str:
+    return (raw or "").strip().upper()
+
+
 def _build_client_ip() -> str:
     forwarded_for = request.headers.get("X-Forwarded-For", "")
     if forwarded_for:
@@ -92,12 +100,96 @@ def login_required(view_func):
     return wrapped
 
 
+def require_admin(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("auth_request", next=request.path))
+        if (session.get("user_role") or "") != "platform_admin":
+            flash("管理者権限が必要です。", "warning")
+            return redirect(url_for("staff_search"))
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
+def _safe_int(raw) -> int | None:
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_platform_admin() -> bool:
+    return (session.get("user_role") or "") == "platform_admin"
+
+
+def _tenant_exists(tenant_id: int) -> bool:
+    db = get_auth_session()
+    try:
+        row = db.execute(select(Tenant.id).where(Tenant.id == tenant_id)).scalar_one_or_none()
+        return row is not None
+    except Exception:
+        app.logger.exception("failed to validate tenant_id=%s", tenant_id)
+        return False
+    finally:
+        db.close()
+
+
+def _resolve_staff_tenant_id() -> tuple[int | None, str | None]:
+    role = (session.get("user_role") or "").strip()
+
+    if role == "tenant_staff":
+        tenant_id = _get_current_tenant_id()
+        if tenant_id is None:
+            return None, "tenant_required"
+        return tenant_id, None
+
+    if role == "platform_admin":
+        raw_arg = request.args.get("tenant_id")
+        if raw_arg is not None:
+            raw_arg = raw_arg.strip()
+            if raw_arg == "":
+                session.pop("impersonate_tenant_id", None)
+            else:
+                tenant_id_from_query = _safe_int(raw_arg)
+                if tenant_id_from_query is None or not _tenant_exists(tenant_id_from_query):
+                    return None, "tenant_invalid"
+                session["impersonate_tenant_id"] = tenant_id_from_query
+
+        impersonate_tenant_id = _safe_int(session.get("impersonate_tenant_id"))
+        if impersonate_tenant_id is None:
+            return None, "tenant_required"
+        if not _tenant_exists(impersonate_tenant_id):
+            session.pop("impersonate_tenant_id", None)
+            return None, "tenant_required"
+        return impersonate_tenant_id, None
+
+    return None, "forbidden"
+
+
 @app.context_processor
 def inject_auth_context():
+    is_authenticated = bool(session.get("user_id"))
+    is_admin = is_authenticated and _is_platform_admin()
+    staff_tenant_id = _safe_int(session.get("impersonate_tenant_id")) if is_admin else _get_current_tenant_id()
+
+    tenant_options = []
+    if is_admin:
+        try:
+            tenant_options = _load_tenant_options()
+        except Exception:
+            app.logger.exception("failed to load tenant options for nav")
+
     return {
-        "is_authenticated": bool(session.get("user_id")),
+        "is_authenticated": is_authenticated,
         "current_user_email": session.get("user_email", ""),
         "current_user_role": session.get("user_role", ""),
+        "is_admin": is_admin,
+        "can_access_admin": is_admin,
+        "staff_tenant_id": staff_tenant_id,
+        "admin_tenant_options": tenant_options,
     }
 
 
@@ -112,18 +204,29 @@ def _get_current_tenant_id() -> int | None:
 
 
 def _staff_tenant_or_redirect():
-    tenant_id = _get_current_tenant_id()
-    if tenant_id is None:
+    tenant_id, err = _resolve_staff_tenant_id()
+    if tenant_id is not None:
+        return tenant_id, None
+
+    if err == "tenant_invalid":
+        flash("指定されたテナントは存在しません。", "warning")
+    elif err == "tenant_required":
+        if _is_platform_admin():
+            flash("テナントを選択してください。", "warning")
+            return None, redirect(url_for("staff_search"))
         flash("テナント未所属のため staff 機能を利用できません。", "warning")
-        return None, redirect(url_for("auth_request"))
-    return tenant_id, None
+    else:
+        flash("staff 権限がありません。", "warning")
+    return None, redirect(url_for("auth_request"))
 
 
 def _staff_tenant_or_403_json():
-    tenant_id = _get_current_tenant_id()
-    if tenant_id is None:
+    tenant_id, err = _resolve_staff_tenant_id()
+    if tenant_id is not None:
+        return tenant_id, None
+    if err in ("tenant_required", "tenant_invalid"):
         return None, (jsonify({"error": "tenant_required"}), 403)
-    return tenant_id, None
+    return None, (jsonify({"error": "forbidden"}), 403)
 
 
 def _load_tenant_options() -> list[Tenant]:
@@ -397,6 +500,7 @@ def index():
 
 @app.route('/admin')
 @login_required
+@require_admin
 def admin_root():
     return redirect(url_for('admin_upload'))
 
@@ -409,6 +513,7 @@ def staff_root():
 
 @app.route('/admin/upload', methods=['GET', 'POST'])
 @login_required
+@require_admin
 def admin_upload():
     tenant_options = _load_tenant_options()
     tenant_ids = {t.id for t in tenant_options}
@@ -482,8 +587,8 @@ def admin_upload():
                 total_rows += 1
                 row = {k.strip(): (v.strip() if v else '') for k, v in row.items()}
 
-                brand = row.get('brand', '').strip()
-                reference = row.get('reference', '').strip()
+                brand = normalize_brand(row.get('brand', ''))
+                reference = normalize_reference(row.get('reference', ''))
 
                 if not brand or not reference:
                     error_count += 1
@@ -650,7 +755,7 @@ def staff_references():
     if err:
         return err
 
-    brand = request.args.get('brand', '').strip()
+    brand = normalize_brand(request.args.get('brand', ''))
     if not brand:
         return jsonify({"brand": "", "count": 0, "items": []})
 
@@ -661,9 +766,47 @@ def staff_references():
 @app.route('/staff/search', methods=['GET', 'POST'])
 @login_required
 def staff_search():
-    tenant_id, redirect_response = _staff_tenant_or_redirect()
-    if redirect_response:
-        return redirect_response
+    tenant_id, tenant_err = _resolve_staff_tenant_id()
+    if tenant_id is None:
+        if _is_platform_admin():
+            warning_message = "指定されたテナントは存在しません。" if tenant_err == "tenant_invalid" else "テナントを選択してください。"
+            flash(warning_message, "warning")
+            if request.method == 'POST':
+                return redirect(url_for('staff_search'))
+            mk, used, rem = get_quota_view()
+            return render_template(
+                'search.html',
+                brands=[],
+                recent_generations=[],
+                brand="",
+                reference="",
+                master=None,
+                override=None,
+                canonical={},
+                overridden_fields=[],
+                warnings=["テナントを選択してください。"],
+                override_warning=None,
+                import_conflict_warning=None,
+                history=[],
+                staff_tenant_missing=True,
+                plan_mode=PLAN_MODE,
+                monthly_limit=MONTHLY_LIMIT,
+                monthly_used=used,
+                monthly_remaining=rem,
+                month_key=mk,
+                total_product_count=0,
+                brand_summaries=[],
+                combined_reference_chars=0,
+                combined_reference_preview="",
+                reference_urls_debug=[],
+                llm_client_file=llmc.__file__,
+                raw_urls_debug=[],
+                similarity_percent=0,
+                similarity_level="blue",
+                saved_article_id=None,
+            )
+        flash("テナント未所属のため staff 機能を利用できません。", "warning")
+        return redirect(url_for("auth_request"))
 
     fields = [
         'price_jpy', 'case_size_mm', 'movement', 'case_material',
@@ -695,8 +838,8 @@ def staff_search():
         action = request.form.get('action', '').strip()
 
         if action == 'search':
-            brand = request.form.get('brand', '').strip()
-            reference = request.form.get('reference', '').strip()
+            brand = normalize_brand(request.form.get('brand', ''))
+            reference = normalize_reference(request.form.get('reference', ''))
             if not brand or not reference:
                 mk, used, rem = get_quota_view()
                 return render_template(
@@ -710,8 +853,8 @@ def staff_search():
             return redirect(url_for('staff_search', brand=brand, reference=reference))
 
         if action == 'save_override':
-            brand = request.form.get('brand', '').strip()
-            reference = request.form.get('reference', '').strip()
+            brand = normalize_brand(request.form.get('brand', ''))
+            reference = normalize_reference(request.form.get('reference', ''))
             if not brand or not reference:
                 mk, used, rem = get_quota_view()
                 return render_template(
@@ -773,8 +916,8 @@ def staff_search():
             return redirect(url_for('staff_search', brand=brand, reference=reference))
 
         if action == 'delete_override':
-            brand = request.form.get('brand', '').strip()
-            reference = request.form.get('reference', '').strip()
+            brand = normalize_brand(request.form.get('brand', ''))
+            reference = normalize_reference(request.form.get('reference', ''))
             if not brand or not reference:
                 _flash_error_from_hint("unknown: missing brand/reference", {"route": "staff_search", "action": "delete_override"})
                 return redirect(url_for('staff_search'))
@@ -799,8 +942,8 @@ def staff_search():
         # Generate
         # ----------------------------
         if action == 'generate_dummy':
-            brand = request.form.get('brand', '').strip()
-            reference = request.form.get('reference', '').strip()
+            brand = normalize_brand(request.form.get('brand', ''))
+            reference = normalize_reference(request.form.get('reference', ''))
             if not brand or not reference:
                 _flash_error_from_hint("unknown: missing brand/reference", {"route": "staff_search", "action": "generate_dummy"})
                 return redirect(url_for('staff_search'))
@@ -1049,8 +1192,8 @@ def staff_search():
         # Rewrite once (max 1 per source id)
         # ----------------------------
         if action == 'rewrite_once':
-            brand = request.form.get('brand', '').strip()
-            reference = request.form.get('reference', '').strip()
+            brand = normalize_brand(request.form.get('brand', ''))
+            reference = normalize_reference(request.form.get('reference', ''))
             source_article_id = request.form.get('source_article_id', '').strip()
 
             if not (brand and reference and source_article_id.isdigit()):
@@ -1233,8 +1376,8 @@ def staff_search():
 
         if action == 'regenerate_from_history':
             flash('履歴から再生成は現在停止中です（今は不要なため）', 'warning')
-            brand = request.form.get('brand', '').strip()
-            reference = request.form.get('reference', '').strip()
+            brand = normalize_brand(request.form.get('brand', ''))
+            reference = normalize_reference(request.form.get('reference', ''))
             return redirect(url_for('staff_search', brand=brand, reference=reference))
 
         _flash_error_from_hint("unknown: unsupported action", {"route": "staff_search", "action": action})
@@ -1245,8 +1388,8 @@ def staff_search():
     # ----------------------------
     mk, used, rem = get_quota_view()
 
-    brand = request.args.get('brand', '').strip()
-    reference = request.args.get('reference', '').strip()
+    brand = normalize_brand(request.args.get('brand', ''))
+    reference = normalize_reference(request.args.get('reference', ''))
 
     master = None
     override = None
