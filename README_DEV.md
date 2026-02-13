@@ -29,6 +29,40 @@ alembic upgrade head
 python scripts/seed_dev.py
 ```
 
+## 4.1) staging最小データ投入（必要時のみ）
+
+`seed_dev.py` は認証用ユーザー中心のため、`master_products` が空の環境では staff 画面候補が出ません。  
+Render Shell で以下を1回実行すると、`Tenant A` に `TESTBRAND / REF001 / price_jpy=123456` を冪等投入できます。
+
+```bash
+python scripts/seed_staging_min.py
+```
+
+投入前後の確認:
+
+```bash
+python scripts/check_staging_data.py
+```
+
+## 4.2) SQLite master_products を Postgres へ移行（tenant指定・冪等）
+
+ローカル `horologen.db` の `master_products` を、指定テナントへ移行します。  
+既存キー `(tenant_id, brand, reference)` は `DO NOTHING` でスキップするため、繰り返し実行できます。
+
+```bash
+# 例: staff-a 向け（tenant_id=2）へ投入
+TENANT_ID=2 python scripts/import_master_products_from_sqlite.py
+
+# 任意: staff-b 向け（tenant_id=3）へも投入
+TENANT_ID=3 python scripts/import_master_products_from_sqlite.py
+```
+
+必要に応じて SQLite パスを変更:
+
+```bash
+TENANT_ID=2 SQLITE_DB_PATH=/path/to/horologen.db python scripts/import_master_products_from_sqlite.py
+```
+
 投入されるユーザー例:
 
 - `platform-admin@example.com` (`platform_admin`, tenantなし)
