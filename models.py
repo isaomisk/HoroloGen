@@ -30,7 +30,12 @@ DEFAULT_DATABASE_URL = f"sqlite:///{DB_PATH}"
 # SQLAlchemy (auth foundation)
 # ----------------------------
 def get_database_url() -> str:
-    return os.getenv("DATABASE_URL", "").strip() or DEFAULT_DATABASE_URL
+    raw = os.getenv("DATABASE_URL", "").strip() or DEFAULT_DATABASE_URL
+    if raw.startswith("postgres://"):
+        raw = "postgresql://" + raw[len("postgres://"):]
+    if raw.startswith("postgresql://"):
+        raw = "postgresql+psycopg://" + raw[len("postgresql://"):]
+    return raw
 
 
 def _build_engine(url: str):
