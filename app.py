@@ -3,6 +3,8 @@ import json
 import csv
 import io
 import os
+import logging
+import re
 import binascii
 import sqlite3
 import time
@@ -42,6 +44,10 @@ MONTHLY_LIMIT = int(os.getenv("HOROLOGEN_MONTHLY_LIMIT", "30"))
 # ----------------------------
 # Flask
 # ----------------------------
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO)
+
+logger = logging.getLogger(__name__)
 app = Flask(__name__)
 init_db()
 app.secret_key = (
@@ -74,6 +80,23 @@ def _flash_error_from_hint(hint: str, context=None, category: str = "error") -> 
 
 def _normalize_email(raw: str) -> str:
     return (raw or "").strip().lower()
+
+
+def _mask_magic_link(url: str) -> str:
+    token_match = re.search(r"([?&]token=)([^&]+)", url or "")
+    if not token_match:
+        return url or ""
+    token = token_match.group(2)
+    if len(token) <= 10:
+        masked = "***"
+    else:
+        masked = f"{token[:6]}...{token[-4:]}"
+    return (url or "").replace(token, masked, 1)
+
+
+def _should_log_magic_link() -> bool:
+    debug_auth_links = (os.getenv("DEBUG_AUTH_LINKS", "") or "").strip()
+    return debug_auth_links == "1"
 
 
 def normalize_brand(raw: str) -> str:
@@ -425,8 +448,8 @@ def auth_request():
                     db.commit()
 
                     verify_url = url_for('auth_verify', token=raw_token, _external=True)
-                    app.logger.info("magic_link email=%s verify_url=%s", user.email, verify_url)
-                    print(f"[MAGIC_LINK] {verify_url}")
+                    if _should_log_magic_link():
+                        logger.warning("[MAGIC_LINK] email=%s url=%s", user.email, _mask_magic_link(verify_url))
             except Exception as e:
                 db.rollback()
                 log_exception(app.logger, e, make_error_id(), {"route": "auth_request"})

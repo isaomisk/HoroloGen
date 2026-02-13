@@ -115,7 +115,11 @@ def _sqlite_connect(row_factory: bool = False):
 
 
 def _is_postgres_url(url: str) -> bool:
-    return url.startswith("postgresql://") or url.startswith("postgresql+psycopg://")
+    return (
+        url.startswith("postgres://")
+        or url.startswith("postgresql://")
+        or url.startswith("postgresql+psycopg://")
+    )
 
 
 def _convert_qmark_to_format(sql: str, n_params: int) -> str:
@@ -334,7 +338,11 @@ def get_db_connection():
     db_url = get_database_url()
     if _is_postgres_url(db_url):
         # psycopg expects postgresql:// scheme.
-        pg_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        pg_url = db_url
+        if pg_url.startswith("postgresql+psycopg://"):
+            pg_url = pg_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        elif pg_url.startswith("postgres://"):
+            pg_url = "postgresql://" + pg_url[len("postgres://"):]
         return PostgresConnCompat(pg_connect(pg_url))
     return _sqlite_connect(row_factory=True)
 
