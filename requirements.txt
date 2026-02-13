@@ -7,3 +7,4 @@ psycopg[binary]==3.2.4
 requests
 beautifulsoup4
 anthropic
+gunicorn>=21.2,<23
