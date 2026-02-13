@@ -82,6 +82,7 @@ def _normalize_email(raw: str) -> str:
     return (raw or "").strip().lower()
 
 
+<<<<<<< fix/staging-master-products
 def _mask_magic_link(url: str) -> str:
     token_match = re.search(r"([?&]token=)([^&]+)", url or "")
     if not token_match:
@@ -99,6 +100,8 @@ def _should_log_magic_link() -> bool:
     return debug_auth_links == "1"
 
 
+=======
+>>>>>>> main
 def normalize_brand(raw: str) -> str:
     return (raw or "").strip().upper()
 

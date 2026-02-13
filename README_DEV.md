@@ -29,6 +29,7 @@ alembic upgrade head
 python scripts/seed_dev.py
 ```
 
+<<<<<<< fix/staging-master-products
 ## 4.1) staging最小データ投入（必要時のみ）
 
 `seed_dev.py` は認証用ユーザー中心のため、`master_products` が空の環境では staff 画面候補が出ません。  
@@ -63,6 +64,8 @@ TENANT_ID=3 python scripts/import_master_products_from_sqlite.py
 TENANT_ID=2 SQLITE_DB_PATH=/path/to/horologen.db python scripts/import_master_products_from_sqlite.py
 ```
 
+=======
+>>>>>>> main
 投入されるユーザー例:
 
 - `platform-admin@example.com` (`platform_admin`, tenantなし)
