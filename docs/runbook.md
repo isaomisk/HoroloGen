@@ -1,6 +1,7 @@
 # Runbook
 
 公開運用（Render staging/prod）の手順は `docs/release-runbook.md` を参照してください。
+prod公開の統合手順は `docs/RUNBOOK_PROD.md` を参照してください。
 
 ## 月間上限の運用（生成回数）
 

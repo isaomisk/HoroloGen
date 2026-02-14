@@ -41,7 +41,7 @@ python scripts/seed_staging_min.py
 投入前後の確認:
 
 ```bash
-python scripts/check_staging_data.py
+python scripts/check_env_data.py
 ```
 
 ## 4.2) SQLite master_products を Postgres へ移行（tenant指定・冪等）

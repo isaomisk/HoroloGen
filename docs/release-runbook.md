@@ -79,7 +79,7 @@ TENANT_ID=3 python scripts/import_master_products_from_sqlite.py
 ### 2.5 データ確認
 
 ```bash
-python scripts/check_staging_data.py
+python scripts/check_env_data.py
 ```
 
 確認ポイント:
