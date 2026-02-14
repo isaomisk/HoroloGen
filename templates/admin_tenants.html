@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Admin: テナント一覧 - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>Admin: テナント一覧</h1>
+<p style="margin-bottom: 16px;">
+    <a href="{{ url_for('admin_tenant_new') }}">テナント作成へ</a>
+    |
+    <a href="{{ url_for('admin_users') }}">ユーザー一覧へ</a>
+</p>
+
+<table>
+    <thead>
+        {% set next_id_dir = 'asc' if not (sort == 'id' and direction == 'asc') else 'desc' %}
+        {% set next_name_dir = 'asc' if not (sort == 'name' and direction == 'asc') else 'desc' %}
+        {% set next_plan_dir = 'asc' if not (sort == 'plan' and direction == 'asc') else 'desc' %}
+        {% set next_created_dir = 'asc' if not (sort == 'created_at' and direction == 'asc') else 'desc' %}
+        <tr>
+            <th><a href="{{ url_for('admin_tenants', sort='id', dir=next_id_dir) }}">id</a></th>
+            <th><a href="{{ url_for('admin_tenants', sort='name', dir=next_name_dir) }}">name</a></th>
+            <th><a href="{{ url_for('admin_tenants', sort='plan', dir=next_plan_dir) }}">plan</a></th>
+            <th><a href="{{ url_for('admin_tenants', sort='created_at', dir=next_created_dir) }}">created_at</a></th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for t in tenants %}
+        <tr>
+            <td>{{ t.id }}</td>
+            <td>{{ t.name }}</td>
+            <td>{{ t.plan }}</td>
+            <td>{{ t.created_at }}</td>
+            <td><a href="{{ url_for('admin_tenant_edit', tenant_id=t.id) }}">編集</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

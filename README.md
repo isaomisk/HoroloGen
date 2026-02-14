@@ -155,6 +155,22 @@ curl -X POST -d "email=staff@example.com" http://127.0.0.1:5000/auth/request
 - `master_products` / `product_overrides` / `generated_articles` は `tenant_id` で分離されます。
 - staff 画面 (`/staff/*`) はログインユーザーの `tenant_id` のデータだけ参照・保存します。
 - admin CSVアップロード (`/admin/upload`) は対象テナント選択が必須です。
+
+## テナント作成 + staff上限 運用チェックリスト
+
+- `/admin/tenants/new` から新規テナントを作成し、`tenant_id` が発行されること
+- 作成したテナントに `tenant_staff` を 5 名作成できること（`active=true` のみカウント）
+- 6 名目の作成が拒否され、上限到達メッセージが表示されること
+- 既存 staff を `active=false` にすると、再び追加できること（または削除後に追加できること）
+- `tenant_staff` ユーザーが `/admin/*` へアクセスした際に `403` となること
+- ユーザー無効化で上限枠が空き、新規 `tenant_staff` を追加できること
+- `active=false` ユーザーはログインできないこと
+- テナント編集で `plan` 変更が保存・反映されること
+- `/admin/users?sort=...&dir=...` と `/admin/tenants?sort=...&dir=...` で並び替えが切り替わること
+- staging で `GET /auth/request` が `404` で、5秒後に `/auth/login` へ遷移すること
+- prod で `GET /auth/request` が `404` で、5秒後に `/auth/login` へ遷移すること
+- dev では（必要時のみ）`DEBUG_AUTH_LINKS=1` で `/auth/request` を利用できること
+
 DB（SQLite）概要
 主なテーブル
 master_products
@@ -258,6 +274,79 @@ DBパス/secret_keyの環境変数化
 CSRF対策、レート制限
 
 生成ログの整理（request_id、失敗理由の分類）
+
+---
+
+## 開発Runbook（ローカル / staging）
+
+### ローカル起動（5001固定）
+
+前提:
+- 作業ディレクトリ: `~/HoroloGen`（例: `/Users/misaki/HoroloGen`）
+- venv: `.venv311`
+- ローカルDB: Docker Postgres（`127.0.0.1:5432`）
+
+1) DB起動（Docker）
+
+```bash
+cd /Users/misaki/HoroloGen
+./scripts/dev_up.sh
+docker ps --format "table {{.Names}}\t{{.Ports}}"
+```
+
+期待例: `horologen-db 127.0.0.1:5432->5432/tcp`
+
+2) venv有効化（確認込み）
+
+```bash
+cd /Users/misaki/HoroloGen
+source .venv311/bin/activate
+which python
+python -V
+which flask
+flask --version
+```
+
+3) アプリ起動（Flask）
+
+```bash
+export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/horologen"
+flask --app app:app run --no-debugger --no-reload --port 5001
+```
+
+4) ログインURL（ローカル）
+
+`http://127.0.0.1:5001/auth/login`
+
+5) 疎通確認（任意）
+
+```bash
+curl -I http://127.0.0.1:5001/auth/login
+```
+
+`200` または `302` が返ればOK。
+
+停止方法:
+- Flask起動ターミナルで `Ctrl + C`
+
+### staging（Render）は最終チェック専用
+
+ログインURL（staging）:
+
+`https://horologen-staging-web.onrender.com/auth/login`
+
+補足:
+- `/auth/request` は MAGIC_LINK 用（現運用では使用しない）
+- 公開前チェックは staging で実施し、通常開発はローカルで行う
+
+### よくある詰まりポイント
+
+- `bash: python: command not found`  
+  venv未有効化。`source .venv311/bin/activate` を実行。
+- DBに繋がらない  
+  `docker ps` でポート/起動状態を確認し、`DATABASE_URL` の host/port を合わせる。
+- ポートが使用中（5001）  
+  `lsof -iTCP:5001 -sTCP:LISTEN` で占有プロセス確認。
 
 ライセンス
 社内利用想定（未設定）

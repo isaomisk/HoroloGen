@@ -1,10 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 import json
 import csv
 import io
 import os
 import logging
 import re
+import logging
 import binascii
 import sqlite3
 import time
@@ -12,7 +13,8 @@ import secrets
 from datetime import datetime, timedelta
 from functools import wraps
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from models import (
     init_db,
@@ -60,6 +62,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 BRANDS = ['cartier', 'omega', 'grand_seiko', 'iwc', 'panerai']
+TENANT_STAFF_LIMIT = 5
 MAGIC_LINK_TTL_MINUTES = 15
 AUTH_REQUEST_MESSAGE = "該当アカウントが存在する場合、ログインURLを送信しました。"
 
@@ -82,21 +85,22 @@ def _normalize_email(raw: str) -> str:
     return (raw or "").strip().lower()
 
 
-def _mask_magic_link(url: str) -> str:
-    token_match = re.search(r"([?&]token=)([^&]+)", url or "")
-    if not token_match:
-        return url or ""
-    token = token_match.group(2)
-    if len(token) <= 10:
-        masked = "***"
-    else:
-        masked = f"{token[:6]}...{token[-4:]}"
-    return (url or "").replace(token, masked, 1)
+def _app_env() -> str:
+    raw = (os.getenv("APP_ENV") or os.getenv("FLASK_ENV") or "").strip().lower()
+    if raw in {"production", "prod"}:
+        return "prod"
+    if raw in {"development", "dev"}:
+        return "dev"
+    if raw == "staging":
+        return "staging"
+    return ""
 
 
-def _should_log_magic_link() -> bool:
-    debug_auth_links = (os.getenv("DEBUG_AUTH_LINKS", "") or "").strip()
-    return debug_auth_links == "1"
+def _is_auth_request_enabled() -> bool:
+    env = _app_env()
+    if env != "dev":
+        return False
+    return (os.getenv("DEBUG_AUTH_LINKS", "") or "").strip() == "1"
 
 
 def normalize_brand(raw: str) -> str:
@@ -118,7 +122,9 @@ def login_required(view_func):
     @wraps(view_func)
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
-            return redirect(url_for("auth_request", next=request.path))
+            return redirect(url_for("auth_login", next=request.path))
+        if session.get("must_change_password") and request.endpoint not in {"auth_change_password", "auth_logout", "static"}:
+            return redirect(url_for("auth_change_password"))
         return view_func(*args, **kwargs)
     return wrapped
 
@@ -127,10 +133,9 @@ def require_admin(view_func):
     @wraps(view_func)
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
-            return redirect(url_for("auth_request", next=request.path))
+            return redirect(url_for("auth_login", next=request.path))
         if (session.get("user_role") or "") != "platform_admin":
-            flash("管理者権限が必要です。", "warning")
-            return redirect(url_for("staff_search"))
+            abort(403)
         return view_func(*args, **kwargs)
     return wrapped
 
@@ -240,7 +245,16 @@ def _staff_tenant_or_redirect():
         flash("テナント未所属のため staff 機能を利用できません。", "warning")
     else:
         flash("staff 権限がありません。", "warning")
-    return None, redirect(url_for("auth_request"))
+    return None, redirect(url_for("auth_login"))
+
+
+def _safe_next_path(raw: str) -> str:
+    val = (raw or "").strip()
+    if not val.startswith("/"):
+        return ""
+    if val.startswith("//"):
+        return ""
+    return val
 
 
 def _staff_tenant_or_403_json():
@@ -258,6 +272,53 @@ def _load_tenant_options() -> list[Tenant]:
         return list(db.execute(select(Tenant).order_by(Tenant.name.asc(), Tenant.id.asc())).scalars())
     finally:
         db.close()
+
+
+def _load_resettable_staff_users() -> list[User]:
+    db = get_auth_session()
+    try:
+        return list(
+            db.execute(
+                select(User)
+                .where(User.role == "tenant_staff")
+                .order_by(User.tenant_id.asc(), User.email.asc())
+            ).scalars()
+        )
+    finally:
+        db.close()
+
+
+def _count_active_tenant_staff(db, tenant_id: int) -> int:
+    return int(
+        db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM users
+                WHERE tenant_id = :tenant_id
+                  AND role = 'tenant_staff'
+                  AND is_active = true
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).scalar_one()
+    )
+
+
+def _parse_sort_params(
+    raw_sort: str | None,
+    raw_dir: str | None,
+    allowed_sorts: set[str],
+    default_sort: str,
+    default_dir: str,
+) -> tuple[str, str]:
+    sort = (raw_sort or "").strip().lower()
+    if sort not in allowed_sorts:
+        sort = default_sort
+    direction = (raw_dir or "").strip().lower()
+    if direction not in {"asc", "desc"}:
+        direction = default_dir
+    return sort, direction
 
 
 # ----------------------------
@@ -423,6 +484,14 @@ def _build_history_rows(rows):
 # ----------------------------
 @app.route('/auth/request', methods=['GET', 'POST'])
 def auth_request():
+    env = _app_env()
+    if env != "dev":
+        return render_template("auth_request_disabled.html"), 404
+
+    if not _is_auth_request_enabled():
+        return render_template("auth_request_disabled.html"), 404
+
+    issued_verify_url = ""
     if request.method == 'POST':
         email = _normalize_email(request.form.get('email', ''))
         if email:
@@ -446,20 +515,77 @@ def auth_request():
                     )
                     db.add(token)
                     db.commit()
-
-                    verify_url = url_for('auth_verify', token=raw_token, _external=True)
-                    if _should_log_magic_link():
-                        logger.warning("[MAGIC_LINK] email=%s url=%s", user.email, _mask_magic_link(verify_url))
+                    issued_verify_url = url_for('auth_verify', token=raw_token, _external=True)
             except Exception as e:
                 db.rollback()
-                log_exception(app.logger, e, make_error_id(), {"route": "auth_request"})
+                _flash_error_from_exception(e, {"route": "auth_request"})
             finally:
                 db.close()
 
         flash(AUTH_REQUEST_MESSAGE, 'success')
-        return redirect(url_for('auth_request'))
+        return render_template('auth_request.html', issued_verify_url=issued_verify_url)
 
-    return render_template('auth_request.html')
+    return render_template('auth_request.html', issued_verify_url=issued_verify_url)
+
+
+@app.route('/auth/login', methods=['GET', 'POST'])
+def auth_login():
+    next_path = _safe_next_path(request.args.get("next", ""))
+    if request.method == 'POST':
+        email = _normalize_email(request.form.get('email', ''))
+        password = request.form.get('password', '')
+        next_path = _safe_next_path(request.form.get("next", ""))
+
+        if not email or not password:
+            flash("メールアドレスとパスワードを入力してください。", "warning")
+            return render_template('auth_login.html', next_path=next_path, email=email)
+
+        db = get_auth_session()
+        try:
+            row = db.execute(
+                select(User).where(
+                    User.email == email,
+                    User.is_active.is_(True),
+                )
+            ).scalar_one_or_none()
+            if not row:
+                flash("メールアドレスまたはパスワードが正しくありません。", "warning")
+                return render_template('auth_login.html', next_path=next_path, email=email)
+
+            raw_user = db.execute(
+                select(User.id, User.email, User.role, User.tenant_id).where(User.id == row.id)
+            ).one()
+            pw_row = db.execute(
+                text("SELECT password_hash, must_change_password FROM users WHERE id = :uid"),
+                {"uid": row.id},
+            ).one_or_none()
+            password_hash = (pw_row[0] if pw_row else "") or ""
+            must_change_password = bool(pw_row[1]) if pw_row else True
+
+            if not password_hash or not check_password_hash(password_hash, password):
+                flash("メールアドレスまたはパスワードが正しくありません。", "warning")
+                return render_template('auth_login.html', next_path=next_path, email=email)
+
+            session.clear()
+            session['user_id'] = raw_user.id
+            session['user_email'] = raw_user.email
+            session['user_role'] = raw_user.role
+            session['tenant_id'] = raw_user.tenant_id
+            session['must_change_password'] = must_change_password
+
+            if must_change_password:
+                session["post_change_next"] = next_path or url_for("staff_search")
+                return redirect(url_for('auth_change_password'))
+            if next_path:
+                return redirect(next_path)
+            return redirect(url_for('staff_search'))
+        except Exception as e:
+            _flash_error_from_exception(e, {"route": "auth_login"})
+            return render_template('auth_login.html', next_path=next_path, email=email)
+        finally:
+            db.close()
+
+    return render_template('auth_login.html', next_path=next_path, email="")
 
 
 @app.route('/auth/verify')
@@ -467,7 +593,7 @@ def auth_verify():
     raw_token = request.args.get('token', '').strip()
     if not raw_token:
         flash('ログインURLが不正です。', 'warning')
-        return redirect(url_for('auth_request'))
+        return redirect(url_for('auth_login'))
 
     db = get_auth_session()
     try:
@@ -481,12 +607,12 @@ def auth_verify():
 
         if not token:
             flash('ログインURLの有効期限切れ、または既に使用済みです。', 'warning')
-            return redirect(url_for('auth_request'))
+            return redirect(url_for('auth_login'))
 
         user = db.get(User, token.user_id)
         if not user or not user.is_active:
             flash('アカウントが無効です。', 'warning')
-            return redirect(url_for('auth_request'))
+            return redirect(url_for('auth_login'))
 
         token.used_at = now_utc()
         db.add(token)
@@ -497,12 +623,20 @@ def auth_verify():
         session['user_email'] = user.email
         session['user_role'] = user.role
         session['tenant_id'] = user.tenant_id
+        must_change_row = db.execute(
+            text("SELECT must_change_password FROM users WHERE id = :uid"),
+            {"uid": user.id},
+        ).one_or_none()
+        session['must_change_password'] = bool(must_change_row[0]) if must_change_row else True
 
+        if session['must_change_password']:
+            session["post_change_next"] = url_for("staff_search")
+            return redirect(url_for('auth_change_password'))
         return redirect(url_for('staff_search'))
     except Exception as e:
         db.rollback()
         _flash_error_from_exception(e, {"route": "auth_verify"})
-        return redirect(url_for('auth_request'))
+        return redirect(url_for('auth_login'))
     finally:
         db.close()
 
@@ -511,14 +645,73 @@ def auth_verify():
 def auth_logout():
     session.clear()
     flash('ログアウトしました。', 'success')
-    return redirect(url_for('auth_request'))
+    return redirect(url_for('auth_login'))
+
+
+@app.route('/auth/change-password', methods=['GET', 'POST'])
+@login_required
+def auth_change_password():
+    if request.method == 'POST':
+        current_password = request.form.get('current_password', '')
+        new_password = request.form.get('new_password', '')
+        confirm_password = request.form.get('confirm_password', '')
+
+        if not current_password or not new_password or not confirm_password:
+            flash("すべての項目を入力してください。", "warning")
+            return render_template('auth_change_password.html')
+        if new_password != confirm_password:
+            flash("新しいパスワードが一致しません。", "warning")
+            return render_template('auth_change_password.html')
+        if len(new_password) < 8:
+            flash("新しいパスワードは8文字以上で入力してください。", "warning")
+            return render_template('auth_change_password.html')
+
+        db = get_auth_session()
+        try:
+            pw_row = db.execute(
+                text("SELECT password_hash FROM users WHERE id = :uid"),
+                {"uid": session.get("user_id")},
+            ).one_or_none()
+            current_hash = (pw_row[0] if pw_row else "") or ""
+            if not current_hash or not check_password_hash(current_hash, current_password):
+                flash("現在のパスワードが正しくありません。", "warning")
+                return render_template('auth_change_password.html')
+
+            db.execute(
+                text(
+                    """
+                    UPDATE users
+                    SET password_hash = :ph,
+                        must_change_password = false,
+                        password_changed_at = CURRENT_TIMESTAMP
+                    WHERE id = :uid
+                    """
+                ),
+                {
+                    "ph": generate_password_hash(new_password),
+                    "uid": session.get("user_id"),
+                },
+            )
+            db.commit()
+            session["must_change_password"] = False
+            flash("パスワードを変更しました。", "success")
+            next_path = _safe_next_path(session.pop("post_change_next", "")) or url_for("staff_search")
+            return redirect(next_path)
+        except Exception as e:
+            db.rollback()
+            _flash_error_from_exception(e, {"route": "auth_change_password"})
+            return render_template('auth_change_password.html')
+        finally:
+            db.close()
+
+    return render_template('auth_change_password.html')
 
 
 @app.route('/')
 def index():
     if session.get("user_id"):
         return redirect(url_for('staff_search'))
-    return redirect(url_for('auth_request'))
+    return redirect(url_for('auth_login'))
 
 
 @app.route('/admin')
@@ -526,6 +719,428 @@ def index():
 @require_admin
 def admin_root():
     return redirect(url_for('admin_upload'))
+
+
+@app.route('/admin/users/new', methods=['GET', 'POST'])
+@login_required
+def admin_user_new():
+    if not _is_platform_admin():
+        abort(403)
+
+    tenant_options = _load_tenant_options()
+    tenant_ids = {t.id for t in tenant_options}
+    created_user_notice = session.pop("created_user_notice", None)
+    preset_tenant_id = _safe_int(request.args.get("tenant_id"))
+    selected_tenant_id = preset_tenant_id if preset_tenant_id in tenant_ids else None
+
+    if request.method == 'POST':
+        email = _normalize_email(request.form.get("email", ""))
+        role = (request.form.get("role", "") or "").strip()
+        tenant_id_raw = (request.form.get("tenant_id", "") or "").strip()
+        tenant_id = None
+        selected_tenant_id = _safe_int(tenant_id_raw)
+
+        if not email:
+            flash("email を入力してください。", "warning")
+            return render_template(
+                'admin_user_new.html',
+                tenants=tenant_options,
+                created_user_notice=created_user_notice,
+                selected_tenant_id=selected_tenant_id,
+            )
+        if role not in {"platform_admin", "tenant_staff"}:
+            flash("role が不正です。", "warning")
+            return render_template(
+                'admin_user_new.html',
+                tenants=tenant_options,
+                created_user_notice=created_user_notice,
+                selected_tenant_id=selected_tenant_id,
+            )
+
+        if role == "tenant_staff":
+            if not tenant_id_raw:
+                flash("tenant_staff には tenant_id が必要です。", "warning")
+                return render_template(
+                    'admin_user_new.html',
+                    tenants=tenant_options,
+                    created_user_notice=created_user_notice,
+                    selected_tenant_id=selected_tenant_id,
+                )
+            try:
+                tenant_id = int(tenant_id_raw)
+            except ValueError:
+                tenant_id = None
+            if tenant_id not in tenant_ids:
+                flash("tenant_id が不正です。", "warning")
+                return render_template(
+                    'admin_user_new.html',
+                    tenants=tenant_options,
+                    created_user_notice=created_user_notice,
+                    selected_tenant_id=selected_tenant_id,
+                )
+
+        db = get_auth_session()
+        try:
+            existing_user_id = db.execute(
+                text("SELECT id FROM users WHERE lower(email) = :email LIMIT 1"),
+                {"email": email},
+            ).scalar_one_or_none()
+            if existing_user_id is not None:
+                flash("その email は既に存在します。", "warning")
+                return render_template(
+                    'admin_user_new.html',
+                    tenants=tenant_options,
+                    created_user_notice=created_user_notice,
+                    selected_tenant_id=selected_tenant_id,
+                )
+
+            if role == "tenant_staff" and tenant_id is not None:
+                active_staff_count = _count_active_tenant_staff(db, tenant_id)
+                if active_staff_count >= TENANT_STAFF_LIMIT:
+                    flash(
+                        f"このテナントは staff 上限（{TENANT_STAFF_LIMIT}件）に達しています。不要なユーザーを無効化するか、プランを変更してください。",
+                        "warning",
+                    )
+                    return render_template(
+                        'admin_user_new.html',
+                        tenants=tenant_options,
+                        created_user_notice=created_user_notice,
+                        selected_tenant_id=selected_tenant_id,
+                    )
+            insert_sql = text(
+                """
+                INSERT INTO users (tenant_id, email, role, is_active, password_hash, must_change_password, password_changed_at)
+                VALUES (:tenant_id, :email, :role, true, :password_hash, true, NULL)
+                RETURNING id
+                """
+            )
+            insert_params = {
+                "tenant_id": tenant_id,
+                "email": email,
+                "role": role,
+                "password_hash": None,
+            }
+            try:
+                new_user_id = db.execute(insert_sql, insert_params).scalar_one()
+            except Exception as first_insert_error:
+                # Allow NULL where schema permits; fallback for NOT NULL schema.
+                if "password_hash" in str(first_insert_error).lower() and "null" in str(first_insert_error).lower():
+                    db.rollback()
+                    insert_params["password_hash"] = "__unset_password__"
+                    new_user_id = db.execute(insert_sql, insert_params).scalar_one()
+                else:
+                    raise
+
+            db.commit()
+
+            session["created_user_notice"] = {
+                "id": int(new_user_id),
+                "email": email,
+            }
+            flash("ユーザーを作成しました。続けて仮パスワードを再発行してください。", "success")
+            return redirect(url_for('admin_user_new'))
+        except Exception as e:
+            db.rollback()
+            _flash_error_from_exception(e, {"route": "admin_user_new", "email": email, "role": role})
+            return render_template(
+                'admin_user_new.html',
+                tenants=tenant_options,
+                created_user_notice=created_user_notice,
+                selected_tenant_id=selected_tenant_id,
+            )
+        finally:
+            db.close()
+
+    return render_template(
+        'admin_user_new.html',
+        tenants=tenant_options,
+        created_user_notice=created_user_notice,
+        selected_tenant_id=selected_tenant_id,
+    )
+
+
+@app.route('/admin/users')
+@login_required
+@require_admin
+def admin_users():
+    allowed_sorts = {"email", "tenant", "role", "active", "created_at"}
+    sort, direction = _parse_sort_params(
+        request.args.get("sort"),
+        request.args.get("dir"),
+        allowed_sorts,
+        default_sort="created_at",
+        default_dir="desc",
+    )
+
+    order_columns = {
+        "email": User.email,
+        "tenant": Tenant.name,
+        "role": User.role,
+        "active": User.is_active,
+        "created_at": User.created_at,
+    }
+    order_column = order_columns[sort]
+    order_expr = order_column.asc() if direction == "asc" else order_column.desc()
+
+    db = get_auth_session()
+    try:
+        rows = db.execute(
+            select(User, Tenant)
+            .outerjoin(Tenant, User.tenant_id == Tenant.id)
+            .order_by(order_expr, User.id.asc())
+        ).all()
+    finally:
+        db.close()
+
+    users = []
+    for user, tenant in rows:
+        users.append(
+            {
+                "id": user.id,
+                "email": user.email,
+                "role": user.role,
+                "tenant_id": user.tenant_id,
+                "tenant_name": tenant.name if tenant else "",
+                "is_active": bool(user.is_active),
+                "created_at": user.created_at,
+            }
+        )
+
+    reset_password_notice = session.pop("reset_password_notice", None)
+    return render_template(
+        "admin_users.html",
+        users=users,
+        sort=sort,
+        direction=direction,
+        current_path=request.full_path.rstrip("?"),
+        reset_password_notice=reset_password_notice,
+    )
+
+
+@app.route('/admin/users/<int:user_id>/edit')
+@login_required
+@require_admin
+def admin_user_edit(user_id: int):
+    db = get_auth_session()
+    try:
+        row = db.execute(
+            select(User, Tenant)
+            .outerjoin(Tenant, User.tenant_id == Tenant.id)
+            .where(User.id == user_id)
+        ).one_or_none()
+    finally:
+        db.close()
+
+    if not row:
+        flash("対象ユーザーが見つかりません。", "warning")
+        return redirect(url_for("admin_users"))
+
+    user, tenant = row
+    return render_template(
+        "admin_user_edit.html",
+        user=user,
+        tenant_name=(tenant.name if tenant else ""),
+        next_path=_safe_next_path(request.args.get("next", "")) or url_for("admin_users"),
+    )
+
+
+@app.route('/admin/users/<int:user_id>/deactivate', methods=['POST'])
+@login_required
+@require_admin
+def admin_user_deactivate(user_id: int):
+    next_path = _safe_next_path(request.form.get("next", "")) or url_for("admin_users")
+    db = get_auth_session()
+    try:
+        user = db.get(User, user_id)
+        if not user:
+            flash("対象ユーザーが見つかりません。", "warning")
+            return redirect(next_path)
+        if not user.is_active:
+            flash("このユーザーは既に無効です。", "warning")
+            return redirect(next_path)
+        user.is_active = False
+        db.add(user)
+        db.commit()
+        flash("ユーザーを無効化しました。", "success")
+    except Exception as e:
+        db.rollback()
+        _flash_error_from_exception(e, {"route": "admin_user_deactivate", "user_id": user_id})
+    finally:
+        db.close()
+    return redirect(next_path)
+
+
+@app.route('/admin/users/<int:user_id>/activate', methods=['POST'])
+@login_required
+@require_admin
+def admin_user_activate(user_id: int):
+    next_path = _safe_next_path(request.form.get("next", "")) or url_for("admin_users")
+    db = get_auth_session()
+    try:
+        row = db.execute(
+            select(User).where(User.id == user_id)
+        ).scalar_one_or_none()
+        if not row:
+            flash("対象ユーザーが見つかりません。", "warning")
+            return redirect(next_path)
+        if row.role == "tenant_staff" and row.tenant_id is not None and not row.is_active:
+            active_staff_count = _count_active_tenant_staff(db, row.tenant_id)
+            if active_staff_count >= TENANT_STAFF_LIMIT:
+                flash(
+                    f"このテナントは staff 上限（{TENANT_STAFF_LIMIT}件）に達しています。不要なユーザーを無効化するか、プランを変更してください。",
+                    "warning",
+                )
+                return redirect(next_path)
+        row.is_active = True
+        db.add(row)
+        db.commit()
+        flash("ユーザーを有効化しました。", "success")
+    except Exception as e:
+        db.rollback()
+        _flash_error_from_exception(e, {"route": "admin_user_activate", "user_id": user_id})
+    finally:
+        db.close()
+    return redirect(next_path)
+
+
+@app.route('/admin/tenants/new', methods=['GET', 'POST'])
+@login_required
+def admin_tenant_new():
+    if not _is_platform_admin():
+        abort(403)
+
+    if request.method == 'POST':
+        tenant_name = (request.form.get("name", "") or "").strip()
+        plan = (request.form.get("plan", "A") or "").strip().upper()
+        if not tenant_name:
+            flash("テナント名を入力してください。", "warning")
+            return render_template(
+                'admin_tenant_new.html',
+                tenant_name=tenant_name,
+                plan=plan,
+            )
+        if plan not in {"A", "B"}:
+            flash("plan が不正です。", "warning")
+            return render_template(
+                'admin_tenant_new.html',
+                tenant_name=tenant_name,
+                plan=plan,
+            )
+
+        db = get_auth_session()
+        try:
+            new_tenant_id = db.execute(
+                text("INSERT INTO tenants (name, plan) VALUES (:name, :plan) RETURNING id"),
+                {"name": tenant_name, "plan": plan},
+            ).scalar_one()
+            db.commit()
+            flash("テナントを作成しました。続けてユーザーを追加してください。", "success")
+            return redirect(url_for('admin_tenant_created', tenant_id=int(new_tenant_id)))
+        except Exception as e:
+            db.rollback()
+            _flash_error_from_exception(e, {"route": "admin_tenant_new", "name": tenant_name, "plan": plan})
+            return render_template(
+                'admin_tenant_new.html',
+                tenant_name=tenant_name,
+                plan=plan,
+            )
+        finally:
+            db.close()
+
+    return render_template(
+        'admin_tenant_new.html',
+        tenant_name="",
+        plan="A",
+    )
+
+
+@app.route('/admin/tenants/<int:tenant_id>/created')
+@login_required
+@require_admin
+def admin_tenant_created(tenant_id: int):
+    db = get_auth_session()
+    try:
+        tenant = db.get(Tenant, tenant_id)
+    finally:
+        db.close()
+
+    if not tenant:
+        flash("対象テナントが見つかりません。", "warning")
+        return redirect(url_for("admin_tenants"))
+    return render_template("admin_tenant_created.html", tenant=tenant)
+
+
+@app.route('/admin/tenants')
+@login_required
+@require_admin
+def admin_tenants():
+    allowed_sorts = {"id", "name", "plan", "created_at"}
+    sort, direction = _parse_sort_params(
+        request.args.get("sort"),
+        request.args.get("dir"),
+        allowed_sorts,
+        default_sort="id",
+        default_dir="asc",
+    )
+
+    order_columns = {
+        "id": Tenant.id,
+        "name": Tenant.name,
+        "plan": Tenant.plan,
+        "created_at": Tenant.created_at,
+    }
+    order_column = order_columns[sort]
+    order_expr = order_column.asc() if direction == "asc" else order_column.desc()
+
+    db = get_auth_session()
+    try:
+        tenants = list(db.execute(select(Tenant).order_by(order_expr, Tenant.id.asc())).scalars())
+    finally:
+        db.close()
+
+    return render_template(
+        "admin_tenants.html",
+        tenants=tenants,
+        sort=sort,
+        direction=direction,
+    )
+
+
+@app.route('/admin/tenants/<int:tenant_id>/edit', methods=['GET', 'POST'])
+@login_required
+@require_admin
+def admin_tenant_edit(tenant_id: int):
+    db = get_auth_session()
+    try:
+        tenant = db.get(Tenant, tenant_id)
+        if not tenant:
+            flash("対象テナントが見つかりません。", "warning")
+            return redirect(url_for("admin_tenants"))
+
+        if request.method == "POST":
+            name = (request.form.get("name", "") or "").strip()
+            plan = (request.form.get("plan", "") or "").strip().upper()
+            if not name:
+                flash("テナント名を入力してください。", "warning")
+                return render_template("admin_tenant_edit.html", tenant=tenant)
+            if plan not in {"A", "B"}:
+                flash("plan が不正です。", "warning")
+                return render_template("admin_tenant_edit.html", tenant=tenant)
+
+            tenant.name = name
+            tenant.plan = plan
+            db.add(tenant)
+            db.commit()
+            flash("テナント情報を更新しました。", "success")
+            return redirect(url_for("admin_tenants"))
+    except Exception as e:
+        db.rollback()
+        _flash_error_from_exception(e, {"route": "admin_tenant_edit", "tenant_id": tenant_id})
+        return redirect(url_for("admin_tenants"))
+    finally:
+        db.close()
+
+    return render_template("admin_tenant_edit.html", tenant=tenant)
 
 
 @app.route('/staff')
@@ -539,7 +1154,9 @@ def staff_root():
 @require_admin
 def admin_upload():
     tenant_options = _load_tenant_options()
+    staff_users = _load_resettable_staff_users()
     tenant_ids = {t.id for t in tenant_options}
+    reset_password_notice = session.pop("reset_password_notice", None)
     selected_tenant_id_raw = (request.form.get("tenant_id") if request.method == "POST" else request.args.get("tenant_id", "")).strip()
     selected_tenant_id = None
     if selected_tenant_id_raw:
@@ -767,8 +1384,60 @@ def admin_upload():
         latest_upload=latest_upload,
         sample_diffs=sample_diffs,
         tenants=tenant_options,
+        staff_users=staff_users,
+        reset_password_notice=reset_password_notice,
         selected_tenant_id=selected_tenant_id,
     )
+
+
+@app.route('/admin/users/<int:user_id>/reset-password', methods=['POST'])
+@login_required
+@require_admin
+def admin_reset_password(user_id: int):
+    next_path = _safe_next_path(request.form.get("next", "")) or url_for("admin_users")
+    db = get_auth_session()
+    try:
+        user = db.execute(
+            select(User).where(
+                User.id == user_id,
+                User.role == "tenant_staff",
+                User.is_active.is_(True),
+            )
+        ).scalar_one_or_none()
+        if not user:
+            flash("対象ユーザーが見つかりません。", "warning")
+            return redirect(next_path)
+
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+        temporary_password = "".join(secrets.choice(alphabet) for _ in range(14))
+        db.execute(
+            text(
+                """
+                UPDATE users
+                SET password_hash = :password_hash,
+                    must_change_password = true,
+                    password_changed_at = NULL
+                WHERE id = :user_id
+                """
+            ),
+            {
+                "password_hash": generate_password_hash(temporary_password),
+                "user_id": user.id,
+            },
+        )
+        db.commit()
+        session["reset_password_notice"] = {
+            "email": user.email,
+            "temporary_password": temporary_password,
+        }
+        flash("仮パスワードを再発行しました。以下の表示はこの1回のみです。", "success")
+    except Exception as e:
+        db.rollback()
+        _flash_error_from_exception(e, {"route": "admin_reset_password", "user_id": user_id})
+    finally:
+        db.close()
+
+    return redirect(next_path)
 
 
 @app.route('/staff/references', methods=['GET'])
@@ -829,7 +1498,7 @@ def staff_search():
                 saved_article_id=None,
             )
         flash("テナント未所属のため staff 機能を利用できません。", "warning")
-        return redirect(url_for("auth_request"))
+        return redirect(url_for("auth_login"))
 
     fields = [
         'price_jpy', 'case_size_mm', 'movement', 'case_material',

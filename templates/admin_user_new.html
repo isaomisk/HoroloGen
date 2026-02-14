@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Admin: ユーザー作成 - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>Admin: ユーザー作成</h1>
+
+{% if created_user_notice %}
+<div style="margin-top: 20px; background: #fff8db; border: 1px solid #efd38a; padding: 12px; border-radius: 6px;">
+    <p><strong>作成ユーザー:</strong> {{ created_user_notice.email }}</p>
+    <p style="margin-top: 8px;">続けて仮パスワードを再発行してください。</p>
+    <form
+        method="POST"
+        action="{{ url_for('admin_reset_password', user_id=created_user_notice.id) }}"
+        style="margin-top: 10px;"
+        onsubmit="return confirm('本当に再発行しますか？');"
+    >
+        <input type="hidden" name="next" value="{{ url_for('admin_user_new') }}">
+        <button type="submit">このユーザーの仮パスワードを再発行</button>
+    </form>
+    <p style="margin-top: 12px;">
+        <a href="{{ url_for('admin_users') }}">一覧へ戻る</a>
+    </p>
+</div>
+{% else %}
+<form method="POST">
+    <div class="form-group">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="text" required>
+    </div>
+
+    <div class="form-group">
+        <label for="role">Role</label>
+        <select id="role" name="role" required>
+            <option value="tenant_staff">tenant_staff</option>
+            <option value="platform_admin">platform_admin</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="tenant_id">Tenant（role=tenant_staff のとき必須）</label>
+        <select id="tenant_id" name="tenant_id">
+            <option value="">選択してください</option>
+            {% for t in tenants %}
+            <option value="{{ t.id }}" {% if selected_tenant_id == t.id %}selected{% endif %}>{{ t.name }} (id={{ t.id }})</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <button type="submit">ユーザー作成</button>
+</form>
+
+<p style="margin-top: 24px;">
+    <a href="{{ url_for('admin_users') }}">ユーザー一覧へ</a>
+</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}ログイン - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>ログイン</h1>
+<p style="margin-bottom: 16px; color: #555;">メールアドレスとパスワードでログインしてください。</p>
+
+<form method="POST">
+  <input type="hidden" name="next" value="{{ next_path or '' }}">
+  <div class="form-group">
+    <label for="email">メールアドレス</label>
+    <input id="email" name="email" type="text" value="{{ email or '' }}" required>
+  </div>
+  <div class="form-group">
+    <label for="password">パスワード</label>
+    <input id="password" name="password" type="password" required>
+  </div>
+  <button type="submit">ログイン</button>
+</form>
+{% endblock %}

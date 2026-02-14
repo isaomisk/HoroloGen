@@ -1,16 +1,23 @@
 {% extends "base.html" %}
 
-{% block title %}ログイン - HoroloGen{% endblock %}
+{% block title %}ログインURL発行（開発用） - HoroloGen{% endblock %}
 
 {% block content %}
-<h1>ログイン</h1>
-<p style="margin-bottom: 16px; color: #555;">登録済みメールアドレスを入力すると、15分有効のログインURLを発行します。</p>
+<h1>ログインURL発行（開発用）</h1>
+<p style="margin-bottom: 16px; color: #555;">この画面は開発環境でのみ利用可能です。</p>
 
 <form method="POST">
   <div class="form-group">
     <label for="email">メールアドレス</label>
     <input id="email" name="email" type="text" required>
   </div>
-  <button type="submit">ログインURLを送信</button>
+  <button type="submit">ログインURLを発行</button>
 </form>
+
+{% if issued_verify_url %}
+<div style="margin-top: 16px; background: #fff8db; border: 1px solid #efd38a; padding: 12px; border-radius: 6px;">
+  <p><strong>発行済みURL（開発用表示）</strong></p>
+  <p style="margin-top: 8px; word-break: break-all;"><a href="{{ issued_verify_url }}">{{ issued_verify_url }}</a></p>
+</div>
+{% endif %}
 {% endblock %}

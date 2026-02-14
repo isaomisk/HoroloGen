@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Admin: テナント作成完了 - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>Admin: テナント作成完了</h1>
+
+<div style="margin-top: 12px; background: #fff8db; border: 1px solid #efd38a; padding: 12px; border-radius: 6px;">
+    <p><strong>作成されたテナント:</strong> {{ tenant.name }} (ID: {{ tenant.id }})</p>
+</div>
+
+<p style="margin-top: 14px;">
+    <a class="btn" href="{{ url_for('admin_user_new', tenant_id=tenant.id) }}">このテナントにstaff追加</a>
+</p>
+
+<p style="margin-top: 12px;">
+    <a href="{{ url_for('admin_tenants') }}">テナント一覧へ</a>
+</p>
+{% endblock %}

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Admin: ユーザー一覧 - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>Admin: ユーザー一覧</h1>
+<p style="margin-bottom: 16px;">
+    <a href="{{ url_for('admin_user_new') }}">ユーザー作成へ</a>
+    |
+    <a href="{{ url_for('admin_tenants') }}">テナント一覧へ</a>
+</p>
+
+{% if reset_password_notice %}
+<div style="margin: 12px 0; background: #fff8db; border: 1px solid #efd38a; padding: 12px; border-radius: 6px;">
+    <p><strong>再発行対象:</strong> {{ reset_password_notice.email }}</p>
+    <p><strong>仮パスワード（1回表示）:</strong> <code>{{ reset_password_notice.temporary_password }}</code></p>
+</div>
+{% endif %}
+
+<table>
+    <thead>
+        {% set next_email_dir = 'asc' if not (sort == 'email' and direction == 'asc') else 'desc' %}
+        {% set next_tenant_dir = 'asc' if not (sort == 'tenant' and direction == 'asc') else 'desc' %}
+        {% set next_role_dir = 'asc' if not (sort == 'role' and direction == 'asc') else 'desc' %}
+        {% set next_active_dir = 'asc' if not (sort == 'active' and direction == 'asc') else 'desc' %}
+        {% set next_created_dir = 'asc' if not (sort == 'created_at' and direction == 'asc') else 'desc' %}
+        <tr>
+            <th><a href="{{ url_for('admin_users', sort='email', dir=next_email_dir) }}">email</a></th>
+            <th><a href="{{ url_for('admin_users', sort='role', dir=next_role_dir) }}">role</a></th>
+            <th><a href="{{ url_for('admin_users', sort='tenant', dir=next_tenant_dir) }}">tenant</a></th>
+            <th><a href="{{ url_for('admin_users', sort='active', dir=next_active_dir) }}">active</a></th>
+            <th><a href="{{ url_for('admin_users', sort='created_at', dir=next_created_dir) }}">created_at</a></th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for u in users %}
+        <tr>
+            <td>{{ u.email }}</td>
+            <td>{{ u.role }}</td>
+            <td>
+                {% if u.tenant_id %}
+                {{ u.tenant_name }} (id={{ u.tenant_id }})
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>{{ 'true' if u.is_active else 'false' }}</td>
+            <td>{{ u.created_at }}</td>
+            <td>
+                <a href="{{ url_for('admin_user_edit', user_id=u.id, next=current_path) }}">編集</a>
+                |
+                {% if u.is_active %}
+                <form method="POST" action="{{ url_for('admin_user_deactivate', user_id=u.id) }}" style="display:inline;">
+                    <input type="hidden" name="next" value="{{ current_path }}">
+                    <button type="submit">Deactivate</button>
+                </form>
+                {% else %}
+                <form method="POST" action="{{ url_for('admin_user_activate', user_id=u.id) }}" style="display:inline;">
+                    <input type="hidden" name="next" value="{{ current_path }}">
+                    <button type="submit">Activate</button>
+                </form>
+                {% endif %}
+                |
+                {% if u.role == 'tenant_staff' and u.is_active %}
+                <form method="POST" action="{{ url_for('admin_reset_password', user_id=u.id) }}" style="display:inline;">
+                    <input type="hidden" name="next" value="{{ current_path }}">
+                    <button type="submit">仮パス再発行</button>
+                </form>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
