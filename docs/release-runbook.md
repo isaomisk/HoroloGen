@@ -11,8 +11,8 @@
 - `DATABASE_URL`
   - Render Postgres 接続URL。
   - アプリ内部で SQLAlchemy 用に `postgresql+psycopg://` へ正規化される実装のため、環境変数は `postgresql://...` を基本とする。
-- `SECRET_KEY` または `HOROLOGEN_SECRET_KEY`
-  - Flask セッション署名キー。必須。
+- `SECRET_KEY`
+  - Flask セッション署名キー。必須。Render ではこの名前に統一して設定する。
 - `ANTHROPIC_API_KEY`
   - 記事生成に必要。未設定時は生成のみ失敗する。
 - `HOROLOGEN_PLAN`
@@ -94,9 +94,10 @@ python scripts/check_staging_data.py
 1. `platform-admin` でログインできる
 2. `staff-a` でログインできる
 3. `/staff/references?brand=TESTBRAND` が `count:1` を返す
-4. `/staff/search` で `REF001` 選択時に `price_jpy=123456` が表示される
-5. staff で `/admin/upload` 直アクセス時に拒否される（RBAC）
-6. admin で staff パスワード再発行後、対象 staff は次回ログイン時にパスワード変更が強制される
+4. `/staff/references?brand=TESTBRAND` を 10 回リロードして、すべて `200` を返す
+5. `/staff/search` で `REF001` 選択時に `price_jpy=123456` が表示される
+6. staff で `/admin/upload` 直アクセス時に拒否される（RBAC）
+7. admin で staff パスワード再発行後、対象 staff は次回ログイン時にパスワード変更が強制される
 
 ## 4. ロールバック手順
 
@@ -139,4 +140,3 @@ python scripts/check_staging_data.py
 2. 同時刻の Application Logs で該当例外を確認
 3. DB欠損なら migration/seed/import の順で復旧
 4. RBAC/tenant 不整合なら users/tenants/master_products の整合を確認
-

@@ -52,11 +52,24 @@ if not logging.getLogger().handlers:
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 init_db()
-app.secret_key = (
-    os.getenv("SECRET_KEY")
-    or os.getenv("HOROLOGEN_SECRET_KEY")
-    or binascii.hexlify(os.urandom(32)).decode("ascii")
+_boot_env_raw = (os.getenv("APP_ENV") or os.getenv("FLASK_ENV") or "").strip().lower()
+if _boot_env_raw in {"development", "dev"}:
+    _boot_env = "dev"
+elif _boot_env_raw in {"production", "prod"}:
+    _boot_env = "prod"
+elif _boot_env_raw == "staging":
+    _boot_env = "staging"
+else:
+    _boot_env = ""
+
+_configured_secret_key = (
+    (os.getenv("SECRET_KEY") or "").strip()
+    or (os.getenv("HOROLOGEN_SECRET_KEY") or "").strip()
+    or (os.getenv("FLASK_SECRET_KEY") or "").strip()
 )
+if _boot_env != "dev" and not _configured_secret_key:
+    raise RuntimeError("SECRET_KEY is required in staging/prod")
+app.secret_key = _configured_secret_key or binascii.hexlify(os.urandom(32)).decode("ascii")
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)

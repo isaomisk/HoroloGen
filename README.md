@@ -100,7 +100,8 @@ venv/ # ローカル環境
   本番想定: `postgresql://user:pass@host:5432/dbname`  
   未設定時はローカル `horologen.db`（SQLite）へフォールバック
 - `SECRET_KEY`  
-  セッション用。未設定時は `HOROLOGEN_SECRET_KEY` を使用
+  セッション用。Render の staging/prod では必須（推奨変数名は `SECRET_KEY`）。
+  互換として `HOROLOGEN_SECRET_KEY` / `FLASK_SECRET_KEY` も読まれるが、運用は `SECRET_KEY` に統一する。
 
 ### 任意（プラン/上限）
 - `HOROLOGEN_PLAN`  
@@ -170,6 +171,7 @@ curl -X POST -d "email=staff@example.com" http://127.0.0.1:5000/auth/request
 - staging で `GET /auth/request` が `404` で、5秒後に `/auth/login` へ遷移すること
 - prod で `GET /auth/request` が `404` で、5秒後に `/auth/login` へ遷移すること
 - dev では（必要時のみ）`DEBUG_AUTH_LINKS=1` で `/auth/request` を利用できること
+- `/staff/references?brand=TESTBRAND` を 10 回リロードして、すべて `200` であること
 
 DB（SQLite）概要
 主なテーブル
