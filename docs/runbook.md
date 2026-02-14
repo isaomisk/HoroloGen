@@ -1,5 +1,7 @@
 # Runbook
 
+公開運用（Render staging/prod）の手順は `docs/release-runbook.md` を参照してください。
+
 ## 月間上限の運用（生成回数）
 
 - 設定値:
@@ -97,4 +99,3 @@
 - `git log --oneline -n 5`
 - 補足:
 - `.git` 配下の権限を `sudo` / `chown` で変更すると別事故になりやすいので、まずは上記の“壊れrefのピンポイント削除”で対応する。
-

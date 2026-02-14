@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Admin: ユーザー編集 - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>Admin: ユーザー編集</h1>
+
+<div class="form-group">
+    <label>Email</label>
+    <input type="text" value="{{ user.email }}" readonly>
+</div>
+<div class="form-group">
+    <label>Role</label>
+    <input type="text" value="{{ user.role }}" readonly>
+</div>
+<div class="form-group">
+    <label>Tenant</label>
+    <input type="text" value="{% if user.tenant_id %}{{ tenant_name }} (id={{ user.tenant_id }}){% else %}-{% endif %}" readonly>
+</div>
+<div class="form-group">
+    <label>Active</label>
+    <input type="text" value="{{ 'true' if user.is_active else 'false' }}" readonly>
+</div>
+
+<p style="margin: 16px 0;">
+    {% if user.is_active %}
+    <form method="POST" action="{{ url_for('admin_user_deactivate', user_id=user.id) }}" style="display:inline;">
+        <input type="hidden" name="next" value="{{ next_path }}">
+        <button type="submit">Deactivate</button>
+    </form>
+    {% else %}
+    <form method="POST" action="{{ url_for('admin_user_activate', user_id=user.id) }}" style="display:inline;">
+        <input type="hidden" name="next" value="{{ next_path }}">
+        <button type="submit">Activate</button>
+    </form>
+    {% endif %}
+    |
+    {% if user.role == 'tenant_staff' and user.is_active %}
+    <form method="POST" action="{{ url_for('admin_reset_password', user_id=user.id) }}" style="display:inline;">
+        <input type="hidden" name="next" value="{{ next_path }}">
+        <button type="submit">仮パス再発行</button>
+    </form>
+    {% endif %}
+</p>
+
+<p>
+    <a href="{{ next_path }}">一覧へ戻る</a>
+</p>
+{% endblock %}

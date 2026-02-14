@@ -78,13 +78,13 @@ python app.py
 `ANTHROPIC_API_KEY` が未設定でもサーバは起動できます。
 ただし記事生成実行時は `ANTHROPIC_API_KEY が未設定です` で失敗します。
 
-## 6) ログインURL（マジックリンク）確認
+## 6) ログイン確認（パスワード認証）
 
-```bash
-curl -X POST -d "email=staff-a@example.com" http://127.0.0.1:5000/auth/request
-```
+ブラウザで `http://127.0.0.1:5000/auth/login` を開き、seed済みアカウントでログインします。
 
-サーバログに `[MAGIC_LINK] http://127.0.0.1:5000/auth/verify?token=...` が出るので、そのURLをブラウザで開いてログインします。
+- `platform-admin@example.com`
+- `staff-a@example.com`
+- `staff-b@example.com`
 
 ## よくある失敗ポイント
 

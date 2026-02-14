@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}Admin: テナント作成 - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>Admin: テナント作成</h1>
+
+<form method="POST" style="margin-top: 16px;">
+    <div class="form-group">
+        <label for="name">テナント名</label>
+        <input id="name" name="name" type="text" value="{{ tenant_name or '' }}" required>
+    </div>
+
+    <div class="form-group">
+        <label for="plan">プラン</label>
+        <select id="plan" name="plan" required>
+            <option value="A" {% if plan == 'A' %}selected{% endif %}>A</option>
+            <option value="B" {% if plan == 'B' %}selected{% endif %}>B</option>
+        </select>
+    </div>
+
+    <button type="submit">テナント作成</button>
+</form>
+
+<p style="margin-top: 24px;">
+    <a href="{{ url_for('admin_tenants') }}">テナント一覧へ</a>
+</p>
+{% endblock %}

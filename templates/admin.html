@@ -4,6 +4,15 @@
 
 {% block content %}
 <h1>Admin: CSVアップロード・インポート</h1>
+<p style="margin-bottom: 16px;">
+    <a href="{{ url_for('admin_tenants') }}">テナント一覧へ</a>
+    |
+    <a href="{{ url_for('admin_users') }}">ユーザー一覧へ</a>
+    |
+    <a href="{{ url_for('admin_tenant_new') }}">テナント作成へ</a>
+    |
+    <a href="{{ url_for('admin_user_new') }}">ユーザー作成へ</a>
+</p>
 
 <form method="POST" enctype="multipart/form-data">
     <div class="form-group">
@@ -24,6 +33,51 @@
     
     <button type="submit">アップロード・インポート</button>
 </form>
+
+<div style="margin-top: 30px;">
+    <h2>Staff パスワード再発行</h2>
+    <p style="color: #666;">再発行後、対象ユーザーは次回ログイン時にパスワード変更が必須になります。</p>
+
+    {% if reset_password_notice %}
+    <div style="margin: 12px 0; background: #fff8db; border: 1px solid #efd38a; padding: 12px; border-radius: 6px;">
+        <p><strong>再発行対象:</strong> {{ reset_password_notice.email }}</p>
+        <p><strong>仮パスワード（1回表示）:</strong> <code>{{ reset_password_notice.temporary_password }}</code></p>
+    </div>
+    {% endif %}
+
+    <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+        <thead>
+            <tr>
+                <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 8px;">Email</th>
+                <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 8px;">Tenant ID</th>
+                <th style="text-align: left; border-bottom: 1px solid #ddd; padding: 8px;">Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in staff_users %}
+            <tr>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">{{ u.email }}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">{{ u.tenant_id }}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #eee;">
+                    <form
+                        method="POST"
+                        action="{{ url_for('admin_reset_password', user_id=u.id) }}"
+                        style="display: inline;"
+                        onsubmit="return confirm('本当に再発行しますか？');"
+                    >
+                        <input
+                            type="hidden"
+                            name="next"
+                            value="{% if selected_tenant_id %}{{ url_for('admin_upload', tenant_id=selected_tenant_id) }}{% else %}{{ url_for('admin_upload') }}{% endif %}"
+                        >
+                        <button type="submit">仮パスワード再発行</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 
 <div style="margin-top: 30px;">
     <h2>CSVファイル形式</h2>
