@@ -62,6 +62,11 @@
 - Admin（CSVアップロード）: `http://127.0.0.1:5000/admin/upload`
 - Staff（検索/生成/言い換え）: `http://127.0.0.1:5000/staff/search`
 
+## 本番運用Runbook
+
+- staging/prod の構築〜データ投入〜公開前チェックは `docs/RUNBOOK_PROD.md` を参照
+- 既存の補助資料: `docs/release-runbook.md`, `docs/runbook.md`
+
 ---
 
 ## ディレクトリ構成（例）
