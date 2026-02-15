@@ -5,6 +5,13 @@
 {% block content %}
 <h1>Admin: ユーザー作成</h1>
 
+{% if reset_password_notice %}
+<div style="margin: 12px 0; background: #fff8db; border: 1px solid #efd38a; padding: 12px; border-radius: 6px;">
+    <p><strong>再発行対象:</strong> {{ reset_password_notice.email }}</p>
+    <p><strong>仮パスワード（この1回のみ表示）:</strong> <code>{{ reset_password_notice.temporary_password }}</code></p>
+</div>
+{% endif %}
+
 {% if created_user_notice %}
 <div style="margin-top: 20px; background: #fff8db; border: 1px solid #efd38a; padding: 12px; border-radius: 6px;">
     <p><strong>作成ユーザー:</strong> {{ created_user_notice.email }}</p>

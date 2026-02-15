@@ -62,7 +62,7 @@
                 </form>
                 {% endif %}
                 |
-                {% if u.role == 'tenant_staff' and u.is_active %}
+                {% if u.is_active %}
                 <form method="POST" action="{{ url_for('admin_reset_password', user_id=u.id) }}" style="display:inline;">
                     <input type="hidden" name="next" value="{{ current_path }}">
                     <button type="submit">仮パス再発行</button>

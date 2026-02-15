@@ -743,6 +743,7 @@ def admin_user_new():
     tenant_options = _load_tenant_options()
     tenant_ids = {t.id for t in tenant_options}
     created_user_notice = session.pop("created_user_notice", None)
+    reset_password_notice = session.pop("reset_password_notice", None)
     preset_tenant_id = _safe_int(request.args.get("tenant_id"))
     selected_tenant_id = preset_tenant_id if preset_tenant_id in tenant_ids else None
 
@@ -759,6 +760,7 @@ def admin_user_new():
                 'admin_user_new.html',
                 tenants=tenant_options,
                 created_user_notice=created_user_notice,
+                reset_password_notice=reset_password_notice,
                 selected_tenant_id=selected_tenant_id,
             )
         if role not in {"platform_admin", "tenant_staff"}:
@@ -767,6 +769,7 @@ def admin_user_new():
                 'admin_user_new.html',
                 tenants=tenant_options,
                 created_user_notice=created_user_notice,
+                reset_password_notice=reset_password_notice,
                 selected_tenant_id=selected_tenant_id,
             )
 
@@ -777,6 +780,7 @@ def admin_user_new():
                     'admin_user_new.html',
                     tenants=tenant_options,
                     created_user_notice=created_user_notice,
+                    reset_password_notice=reset_password_notice,
                     selected_tenant_id=selected_tenant_id,
                 )
             try:
@@ -789,6 +793,7 @@ def admin_user_new():
                     'admin_user_new.html',
                     tenants=tenant_options,
                     created_user_notice=created_user_notice,
+                    reset_password_notice=reset_password_notice,
                     selected_tenant_id=selected_tenant_id,
                 )
 
@@ -804,6 +809,7 @@ def admin_user_new():
                     'admin_user_new.html',
                     tenants=tenant_options,
                     created_user_notice=created_user_notice,
+                    reset_password_notice=reset_password_notice,
                     selected_tenant_id=selected_tenant_id,
                 )
 
@@ -818,6 +824,7 @@ def admin_user_new():
                         'admin_user_new.html',
                         tenants=tenant_options,
                         created_user_notice=created_user_notice,
+                        reset_password_notice=reset_password_notice,
                         selected_tenant_id=selected_tenant_id,
                     )
             insert_sql = text(
@@ -859,6 +866,7 @@ def admin_user_new():
                 'admin_user_new.html',
                 tenants=tenant_options,
                 created_user_notice=created_user_notice,
+                reset_password_notice=reset_password_notice,
                 selected_tenant_id=selected_tenant_id,
             )
         finally:
@@ -868,6 +876,7 @@ def admin_user_new():
         'admin_user_new.html',
         tenants=tenant_options,
         created_user_notice=created_user_notice,
+        reset_password_notice=reset_password_notice,
         selected_tenant_id=selected_tenant_id,
     )
 
@@ -934,6 +943,7 @@ def admin_users():
 @login_required
 @require_admin
 def admin_user_edit(user_id: int):
+    reset_password_notice = session.pop("reset_password_notice", None)
     db = get_auth_session()
     try:
         row = db.execute(
@@ -954,6 +964,7 @@ def admin_user_edit(user_id: int):
         user=user,
         tenant_name=(tenant.name if tenant else ""),
         next_path=_safe_next_path(request.args.get("next", "")) or url_for("admin_users"),
+        reset_password_notice=reset_password_notice,
     )
 
 
@@ -1413,12 +1424,11 @@ def admin_reset_password(user_id: int):
         user = db.execute(
             select(User).where(
                 User.id == user_id,
-                User.role == "tenant_staff",
                 User.is_active.is_(True),
             )
         ).scalar_one_or_none()
         if not user:
-            flash("対象ユーザーが見つかりません。", "warning")
+            flash("対象ユーザーが見つからないか、無効化されています。", "warning")
             return redirect(next_path)
 
         alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
