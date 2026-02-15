@@ -75,7 +75,10 @@ TENANT_ID=2 SQLITE_DB_PATH="/path/to/horologen.db" python scripts/import_master_
 ## 5) 公開前チェックリスト（P0）
 
 ```bash
-APP_BASE_URL="https://<prod-domain>" python scripts/prod_smoke_check.py
+APP_BASE_URL="https://<prod-domain>" \
+SMOKE_EMAIL="<staff-or-admin-email>" \
+SMOKE_PASSWORD="<smoke-password>" \
+python scripts/prod_smoke_check.py
 ```
 
 - [ ] `platform-admin` で `/auth/login` ログインできる
