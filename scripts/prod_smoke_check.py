@@ -66,6 +66,15 @@ def _assert_status(session: requests.Session, base_url: str, path: str, expected
         raise RuntimeError(f"status mismatch: {path} expected={expected} got={got}")
 
 
+def _mask_location(raw_location: str) -> str:
+    if not raw_location:
+        return ""
+    qpos = raw_location.find("?")
+    if qpos < 0:
+        return raw_location
+    return f"{raw_location[:qpos]}?..."
+
+
 def _login(session: requests.Session, base_url: str, email: str, password: str) -> None:
     login_path = "/auth/login"
     try:
@@ -106,7 +115,18 @@ def main() -> int:
     _login(session, base_url, smoke_email, smoke_password)
 
     path = "/staff/references?brand=TESTBRAND"
+    first_resp = session.get(f"{base_url}{path}", timeout=TIMEOUT_SEC, allow_redirects=False)
+    first_status = int(first_resp.status_code)
+    print(f"CHECK {path} [1/10] -> {first_status}")
+    if first_status in {302, 303}:
+        masked_location = _mask_location(first_resp.headers.get("Location", ""))
+        print(f"REDIRECT {path} -> {masked_location}")
+    if first_status != 200:
+        raise RuntimeError(f"status mismatch: {path} run=1 expected=200 got={first_status}")
+
     for i in range(1, 11):
+        if i == 1:
+            continue
         got = _get_status(session, base_url, path)
         print(f"CHECK {path} [{i}/10] -> {got}")
         if got != 200:
