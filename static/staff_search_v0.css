@@ -207,6 +207,14 @@
   margin-bottom: 0;
 }
 
+.staff-search-v0 .v0-reference-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
 .staff-search-v0 label {
   font-size: 0.85rem;
   color: var(--v0-muted);

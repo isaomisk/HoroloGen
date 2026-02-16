@@ -57,7 +57,7 @@
   <input type="hidden" name="action" value="search">
   <div class="form-group v0-field">
     <label for="brand">ブランド</label>
-    <select id="brand" name="brand" required>
+    <select id="brand" name="brand" data-references-url="{{ url_for('staff_references') }}" required>
       <option value="">選択してください</option>
       {% for b in brands %}
       <option value="{{ b }}" {% if brand == b %}selected{% endif %}>{{ b }}</option>
@@ -66,8 +66,10 @@
   </div>
 
   <div class="form-group v0-field">
-    <div id="ref_count" class="v0-muted">登録数: {% if reference_registration_count is none %}-{% else %}{{ reference_registration_count }}件{% endif %}</div>
-    <label for="reference">リファレンス</label>
+    <label for="reference" style="display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:4px;">
+      <span>リファレンス</span>
+      <span id="ref_count" class="v0-muted">登録数: {% if reference_registration_count is none %}-{% else %}{{ reference_registration_count }}件{% endif %}</span>
+    </label>
     <div class="v0-reference-wrap">
       <input type="text" id="reference" name="reference" value="{{ reference or '' }}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
       <div id="reference_suggestions" class="v0-reference-suggestions" hidden></div>
@@ -650,15 +652,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (refCache.has(brand)) {
       const cached = refCache.get(brand);
       applyOptions(cached.items);
+      refCount.textContent = `登録数: ${cached.count}件`;
       setIdleState();
       return;
     }
 
     referenceInput.disabled = true;
     refLoading.style.display = 'inline';
+    refCount.textContent = '登録数: 読み込み中…';
 
     try {
-      const res = await fetch(`/staff/references?brand=${encodeURIComponent(brand)}`);
+      const referencesUrl = brandSelect.dataset.referencesUrl || '/staff/references';
+      const res = await fetch(`${referencesUrl}?brand=${encodeURIComponent(brand)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
@@ -668,10 +673,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const count = Number.isFinite(Number(data.count)) ? Number(data.count) : items.length;
       refCache.set(brand, { count, items });
       applyOptions(items);
+      refCount.textContent = `登録数: ${count}件`;
       setIdleState();
     } catch (_e) {
       if (currentRequest !== requestId) return;
       clearOptions();
+      refCount.textContent = '登録数: 取得失敗';
       setIdleState();
     }
   }
