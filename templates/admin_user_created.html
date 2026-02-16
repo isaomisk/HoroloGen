@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Admin: ユーザー作成完了 - HoroloGen{% endblock %}
+
+{% block content %}
+<h1>Admin: ユーザー作成完了</h1>
+
+{% if created_notice %}
+<div style="margin: 12px 0; background: #fff8db; border: 1px solid #efd38a; padding: 12px; border-radius: 6px;">
+  <p><strong>email:</strong> <code id="created_email">{{ created_notice.email }}</code></p>
+  <p><strong>role:</strong> <code id="created_role">{{ created_notice.role }}</code></p>
+  <p><strong>tenant:</strong> <code id="created_tenant">{{ created_notice.tenant or '-' }}</code></p>
+  <p><strong>temporary_password:</strong> <code id="created_temp_password">{{ created_notice.temporary_password }}</code></p>
+
+  <button type="button" onclick="copyCreatedUserInfo()">表示内容をコピー</button>
+  <button type="button" onclick="copyTempPassword()">仮パスワードのみコピー</button>
+</div>
+
+<p style="margin-top: 12px;">この仮パスワードはこの画面で1回のみ表示されます。</p>
+{% else %}
+<div class="alert alert-warning">
+  再表示不可、再発行してください。
+</div>
+{% if user_summary %}
+<div style="margin: 12px 0; background: #f6f6f6; border: 1px solid #ddd; padding: 12px; border-radius: 6px;">
+  <p><strong>対象ユーザー:</strong> {{ user_summary.email }}</p>
+  <p><strong>role:</strong> {{ user_summary.role }}</p>
+  <p><strong>tenant:</strong> {{ user_summary.tenant or '-' }}</p>
+</div>
+{% endif %}
+{% endif %}
+
+<p style="margin-top: 20px;">
+  <a href="{{ url_for('admin_users') }}">ユーザー一覧へ</a>
+  |
+  <a href="{{ url_for('admin_user_new') }}">ユーザー作成へ戻る</a>
+</p>
+
+<script>
+function copyText(text) {
+  if (!text) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => alert('コピーしました'));
+    return;
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  document.body.appendChild(area);
+  area.select();
+  document.execCommand('copy');
+  document.body.removeChild(area);
+  alert('コピーしました');
+}
+
+function copyCreatedUserInfo() {
+  const email = document.getElementById('created_email');
+  const role = document.getElementById('created_role');
+  const tenant = document.getElementById('created_tenant');
+  const temp = document.getElementById('created_temp_password');
+  if (!email || !role || !tenant || !temp) return;
+  copyText(
+    `email: ${email.textContent}\nrole: ${role.textContent}\ntenant: ${tenant.textContent}\ntemporary_password: ${temp.textContent}`
+  );
+}
+
+function copyTempPassword() {
+  const temp = document.getElementById('created_temp_password');
+  if (!temp) return;
+  copyText(temp.textContent);
+}
+</script>
+{% endblock %}

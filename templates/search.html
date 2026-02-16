@@ -66,7 +66,7 @@
   </div>
 
   <div class="form-group v0-field">
-    <div id="ref_count" class="v0-muted">登録数: -</div>
+    <div id="ref_count" class="v0-muted">登録数: {% if reference_registration_count is none %}-{% else %}{{ reference_registration_count }}件{% endif %}</div>
     <label for="reference">リファレンス</label>
     <div class="v0-reference-wrap">
       <input type="text" id="reference" name="reference" value="{{ reference or '' }}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
@@ -642,7 +642,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (!brand) {
       clearOptions();
-      refCount.textContent = '登録数: 0件';
+      refCount.textContent = '登録数: -';
       setIdleState();
       return;
     }
@@ -650,14 +650,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (refCache.has(brand)) {
       const cached = refCache.get(brand);
       applyOptions(cached.items);
-      refCount.textContent = `登録数: ${cached.count}件`;
       setIdleState();
       return;
     }
 
     referenceInput.disabled = true;
     refLoading.style.display = 'inline';
-    refCount.textContent = '登録数: 読み込み中…';
 
     try {
       const res = await fetch(`/staff/references?brand=${encodeURIComponent(brand)}`);
@@ -670,12 +668,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const count = Number.isFinite(Number(data.count)) ? Number(data.count) : items.length;
       refCache.set(brand, { count, items });
       applyOptions(items);
-      refCount.textContent = `登録数: ${count}件`;
       setIdleState();
     } catch (_e) {
       if (currentRequest !== requestId) return;
       clearOptions();
-      refCount.textContent = '登録数: 取得失敗';
       setIdleState();
     }
   }
@@ -721,7 +717,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateReferences();
   } else {
     clearOptions();
-    refCount.textContent = '登録数: 0件';
+    refCount.textContent = '登録数: -';
   }
 });
 </script>

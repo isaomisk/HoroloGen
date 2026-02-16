@@ -124,6 +124,32 @@ def normalize_reference(raw: str) -> str:
     return (raw or "").strip().upper()
 
 
+def _generate_temporary_password(length: int = 14) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _count_master_products_for_reference(tenant_id: int, brand: str, reference: str) -> int | None:
+    if not brand or not reference:
+        return None
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM master_products
+            WHERE tenant_id = ? AND brand = ? AND reference = ?
+            """,
+            (tenant_id, brand, reference),
+        ).fetchone()
+        return int(row["c"] if row else 0)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _build_client_ip() -> str:
     forwarded_for = request.headers.get("X-Forwarded-For", "")
     if forwarded_for:
@@ -750,6 +776,7 @@ def admin_root():
 
 
 @app.route('/admin/users/new', methods=['GET', 'POST'])
+@app.route('/admin/users/create', methods=['GET', 'POST'])
 @login_required
 def admin_user_new():
     if not _is_platform_admin():
@@ -757,8 +784,6 @@ def admin_user_new():
 
     tenant_options = _load_tenant_options()
     tenant_ids = {t.id for t in tenant_options}
-    created_user_notice = session.pop("created_user_notice", None)
-    reset_password_notice = session.pop("reset_password_notice", None)
     preset_tenant_id = _safe_int(request.args.get("tenant_id"))
     selected_tenant_id = preset_tenant_id if preset_tenant_id in tenant_ids else None
 
@@ -774,8 +799,6 @@ def admin_user_new():
             return render_template(
                 'admin_user_new.html',
                 tenants=tenant_options,
-                created_user_notice=created_user_notice,
-                reset_password_notice=reset_password_notice,
                 selected_tenant_id=selected_tenant_id,
             )
         if role not in {"platform_admin", "tenant_staff"}:
@@ -783,8 +806,6 @@ def admin_user_new():
             return render_template(
                 'admin_user_new.html',
                 tenants=tenant_options,
-                created_user_notice=created_user_notice,
-                reset_password_notice=reset_password_notice,
                 selected_tenant_id=selected_tenant_id,
             )
 
@@ -794,8 +815,6 @@ def admin_user_new():
                 return render_template(
                     'admin_user_new.html',
                     tenants=tenant_options,
-                    created_user_notice=created_user_notice,
-                    reset_password_notice=reset_password_notice,
                     selected_tenant_id=selected_tenant_id,
                 )
             try:
@@ -807,8 +826,6 @@ def admin_user_new():
                 return render_template(
                     'admin_user_new.html',
                     tenants=tenant_options,
-                    created_user_notice=created_user_notice,
-                    reset_password_notice=reset_password_notice,
                     selected_tenant_id=selected_tenant_id,
                 )
 
@@ -823,8 +840,6 @@ def admin_user_new():
                 return render_template(
                     'admin_user_new.html',
                     tenants=tenant_options,
-                    created_user_notice=created_user_notice,
-                    reset_password_notice=reset_password_notice,
                     selected_tenant_id=selected_tenant_id,
                 )
 
@@ -838,10 +853,10 @@ def admin_user_new():
                     return render_template(
                         'admin_user_new.html',
                         tenants=tenant_options,
-                        created_user_notice=created_user_notice,
-                        reset_password_notice=reset_password_notice,
                         selected_tenant_id=selected_tenant_id,
                     )
+
+            temporary_password = _generate_temporary_password()
             insert_sql = text(
                 """
                 INSERT INTO users (tenant_id, email, role, is_active, password_hash, must_change_password, password_changed_at)
@@ -853,35 +868,34 @@ def admin_user_new():
                 "tenant_id": tenant_id,
                 "email": email,
                 "role": role,
-                "password_hash": None,
+                "password_hash": generate_password_hash(temporary_password),
             }
-            try:
-                new_user_id = db.execute(insert_sql, insert_params).scalar_one()
-            except Exception as first_insert_error:
-                # Allow NULL where schema permits; fallback for NOT NULL schema.
-                if "password_hash" in str(first_insert_error).lower() and "null" in str(first_insert_error).lower():
-                    db.rollback()
-                    insert_params["password_hash"] = "__unset_password__"
-                    new_user_id = db.execute(insert_sql, insert_params).scalar_one()
-                else:
-                    raise
+            new_user_id = db.execute(insert_sql, insert_params).scalar_one()
 
             db.commit()
 
-            session["created_user_notice"] = {
+            tenant_name = ""
+            if tenant_id is not None:
+                for tenant in tenant_options:
+                    if tenant.id == tenant_id:
+                        tenant_name = tenant.name
+                        break
+
+            session["admin_created_user_credentials"] = {
                 "id": int(new_user_id),
                 "email": email,
+                "role": role,
+                "tenant": tenant_name,
+                "temporary_password": temporary_password,
             }
-            flash("ユーザーを作成しました。続けて仮パスワードを再発行してください。", "success")
-            return redirect(url_for('admin_user_new'))
+            flash("ユーザーを作成しました。仮パスワードは次のページで1回のみ表示されます。", "success")
+            return redirect(url_for('admin_user_created', user_id=int(new_user_id)))
         except Exception as e:
             db.rollback()
             _flash_error_from_exception(e, {"route": "admin_user_new", "email": email, "role": role})
             return render_template(
                 'admin_user_new.html',
                 tenants=tenant_options,
-                created_user_notice=created_user_notice,
-                reset_password_notice=reset_password_notice,
                 selected_tenant_id=selected_tenant_id,
             )
         finally:
@@ -890,9 +904,45 @@ def admin_user_new():
     return render_template(
         'admin_user_new.html',
         tenants=tenant_options,
-        created_user_notice=created_user_notice,
-        reset_password_notice=reset_password_notice,
         selected_tenant_id=selected_tenant_id,
+    )
+
+
+@app.route('/admin/users/created/<int:user_id>', methods=['GET'])
+@login_required
+@require_admin
+def admin_user_created(user_id: int):
+    created_notice = None
+    one_time_credentials = session.get("admin_created_user_credentials")
+    if one_time_credentials and int(one_time_credentials.get("id", 0) or 0) == user_id:
+        created_notice = one_time_credentials
+        session.pop("admin_created_user_credentials", None)
+
+    user_summary = None
+    db = get_auth_session()
+    try:
+        row = db.execute(
+            select(User, Tenant)
+            .outerjoin(Tenant, User.tenant_id == Tenant.id)
+            .where(User.id == user_id)
+        ).one_or_none()
+    finally:
+        db.close()
+
+    if row:
+        user, tenant = row
+        user_summary = {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role,
+            "tenant": tenant.name if tenant else "",
+        }
+
+    return render_template(
+        "admin_user_created.html",
+        user_id=user_id,
+        created_notice=created_notice,
+        user_summary=user_summary,
     )
 
 
@@ -1451,8 +1501,7 @@ def admin_reset_password(user_id: int):
             flash("対象ユーザーが見つからないか、無効化されています。", "warning")
             return redirect(next_path)
 
-        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-        temporary_password = "".join(secrets.choice(alphabet) for _ in range(14))
+        temporary_password = _generate_temporary_password()
         db.execute(
             text(
                 """
@@ -1539,6 +1588,7 @@ def staff_search():
                 similarity_percent=0,
                 similarity_level="blue",
                 saved_article_id=None,
+                reference_registration_count=None,
             )
         flash("テナント未所属のため staff 機能を利用できません。", "warning")
         return redirect(url_for("auth_login"))
@@ -1582,6 +1632,7 @@ def staff_search():
                     brands=get_brands(tenant_id=tenant_id),
                     recent_generations=get_recent_generations(limit=10, tenant_id=tenant_id),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
+                    reference_registration_count=None,
                     **summary_defaults,
                     **debug_defaults
                 )
@@ -1597,6 +1648,7 @@ def staff_search():
                     brands=get_brands(tenant_id=tenant_id),
                     recent_generations=get_recent_generations(limit=10, tenant_id=tenant_id),
                     plan_mode=PLAN_MODE, monthly_limit=MONTHLY_LIMIT, monthly_used=used, monthly_remaining=rem, month_key=mk,
+                    reference_registration_count=None,
                     **summary_defaults,
                     **debug_defaults
                 )
@@ -1920,6 +1972,7 @@ def staff_search():
                 monthly_used=used,
                 monthly_remaining=rem,
                 month_key=mk,
+                reference_registration_count=_count_master_products_for_reference(tenant_id, brand, reference),
                 **summary_defaults,
             )
 
@@ -2104,6 +2157,7 @@ def staff_search():
                 monthly_used=used,
                 monthly_remaining=rem,
                 month_key=mk,
+                reference_registration_count=_count_master_products_for_reference(tenant_id, brand, reference),
                 **summary_defaults,
 
                 history=history,
@@ -2125,6 +2179,7 @@ def staff_search():
 
     brand = normalize_brand(request.args.get('brand', ''))
     reference = normalize_reference(request.args.get('reference', ''))
+    reference_registration_count = _count_master_products_for_reference(tenant_id, brand, reference)
 
     master = None
     override = None
@@ -2197,6 +2252,7 @@ def staff_search():
         monthly_used=used,
         monthly_remaining=rem,
         month_key=mk,
+        reference_registration_count=reference_registration_count,
         **summary_defaults,
 
         **debug_defaults,
