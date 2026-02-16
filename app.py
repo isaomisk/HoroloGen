@@ -318,6 +318,21 @@ def _count_active_tenant_staff(db, tenant_id: int) -> int:
     )
 
 
+def _count_active_platform_admins(db) -> int:
+    return int(
+        db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM users
+                WHERE role = 'platform_admin'
+                  AND is_active = true
+                """
+            )
+        ).scalar_one()
+    )
+
+
 def _parse_sort_params(
     raw_sort: str | None,
     raw_dir: str | None,
@@ -982,6 +997,11 @@ def admin_user_deactivate(user_id: int):
         if not user.is_active:
             flash("このユーザーは既に無効です。", "warning")
             return redirect(next_path)
+        if user.role == "platform_admin":
+            active_admin_count = _count_active_platform_admins(db)
+            if active_admin_count <= 1:
+                flash("有効な platform_admin が1人のみのため、このユーザーは無効化できません。", "warning")
+                return redirect(next_path)
         user.is_active = False
         db.add(user)
         db.commit()
