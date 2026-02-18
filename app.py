@@ -150,6 +150,29 @@ def _count_master_products_for_reference(tenant_id: int, brand: str, reference: 
             pass
 
 
+def _save_staff_additional_input(
+    conn,
+    tenant_id: int,
+    brand: str,
+    reference: str,
+    content: str,
+    updated_by_user_id: int | None = None,
+) -> None:
+    clean_content = (content or "").strip()
+    conn.execute(
+        """
+        INSERT INTO staff_additional_inputs
+        (tenant_id, brand, reference, content, updated_by_user_id, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(tenant_id, brand, reference) DO UPDATE SET
+            content = excluded.content,
+            updated_by_user_id = excluded.updated_by_user_id,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (tenant_id, brand, reference, clean_content, updated_by_user_id),
+    )
+
+
 def _build_client_ip() -> str:
     forwarded_for = request.headers.get("X-Forwarded-For", "")
     if forwarded_for:
@@ -1589,6 +1612,7 @@ def staff_search():
                 similarity_level="blue",
                 saved_article_id=None,
                 reference_registration_count=None,
+                staff_additional_input="",
             )
         flash("テナント未所属のため staff 機能を利用できません。", "warning")
         return redirect(url_for("auth_login"))
@@ -1610,6 +1634,7 @@ def staff_search():
         "similarity_percent": 0,
         "similarity_level": "blue",
         "saved_article_id": None,
+        "staff_additional_input": "",
     }
 
     mk0, _, _ = get_quota_view()
@@ -1656,7 +1681,6 @@ def staff_search():
             data = {'brand': brand, 'reference': reference}
             for f in fields:
                 data[f] = request.form.get(f, '').strip()
-            data['editor_note'] = request.form.get('editor_note', '').strip()
 
             conn = get_db_connection()
             try:
@@ -1665,8 +1689,8 @@ def staff_search():
                     INSERT INTO product_overrides
                     (tenant_id, brand, reference, price_jpy, case_size_mm, movement, case_material,
                      bracelet_strap, dial_color, water_resistance_m, buckle, warranty_years,
-                     collection, movement_caliber, case_thickness_mm, lug_width_mm, remarks, editor_note, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                     collection, movement_caliber, case_thickness_mm, lug_width_mm, remarks, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(tenant_id, brand, reference) DO UPDATE SET
                         price_jpy = excluded.price_jpy,
                         case_size_mm = excluded.case_size_mm,
@@ -1682,15 +1706,13 @@ def staff_search():
                         case_thickness_mm = excluded.case_thickness_mm,
                         lug_width_mm = excluded.lug_width_mm,
                         remarks = excluded.remarks,
-                        editor_note = excluded.editor_note,
                         updated_at = CURRENT_TIMESTAMP
                 ''', (
                     tenant_id, data['brand'], data['reference'], data['price_jpy'], data['case_size_mm'],
                     data['movement'], data['case_material'], data['bracelet_strap'],
                     data['dial_color'], data['water_resistance_m'], data['buckle'],
                     data['warranty_years'], data['collection'], data['movement_caliber'],
-                    data['case_thickness_mm'], data['lug_width_mm'], data['remarks'],
-                    data['editor_note']
+                    data['case_thickness_mm'], data['lug_width_mm'], data['remarks']
                 ))
                 conn.commit()
             finally:
@@ -1734,7 +1756,7 @@ def staff_search():
             if not brand or not reference:
                 _flash_error_from_hint("unknown: missing brand/reference", {"route": "staff_search", "action": "generate_dummy"})
                 return redirect(url_for('staff_search'))
-            editor_note_in_form = request.form.get('editor_note', '').strip()
+            staff_additional_input_in_form = request.form.get('staff_additional_input', '').strip()
 
             raw_urls = [
                 request.form.get('reference_url_1', '').strip(),
@@ -1761,33 +1783,41 @@ def staff_search():
                     WHERE tenant_id = ? AND brand = ? AND reference = ?
                 ''', (tenant_id, brand, reference)).fetchone()
 
-                saved_editor_note = (
-                    override['editor_note']
-                    if override and 'editor_note' in override.keys() and override['editor_note']
-                    else ''
-                )
-                if editor_note_in_form and editor_note_in_form != saved_editor_note:
-                    conn.execute('''
-                        INSERT INTO product_overrides (tenant_id, brand, reference, editor_note, updated_at)
-                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                        ON CONFLICT(tenant_id, brand, reference) DO UPDATE SET
-                            editor_note = excluded.editor_note,
-                            updated_at = CURRENT_TIMESTAMP
-                    ''', (tenant_id, brand, reference, editor_note_in_form))
+                staff_row = conn.execute(
+                    '''
+                    SELECT content
+                    FROM staff_additional_inputs
+                    WHERE tenant_id = ? AND brand = ? AND reference = ?
+                    ''',
+                    (tenant_id, brand, reference),
+                ).fetchone()
+                saved_staff_additional_input = (staff_row['content'] if staff_row and staff_row['content'] else '').strip()
+                if staff_additional_input_in_form != saved_staff_additional_input:
+                    if staff_additional_input_in_form:
+                        flash("スタッフの体験談を追加して文章を生成します", "warning")
+                    current_user_id = _safe_int(session.get("user_id"))
+                    _save_staff_additional_input(
+                        conn=conn,
+                        tenant_id=tenant_id,
+                        brand=brand,
+                        reference=reference,
+                        content=staff_additional_input_in_form,
+                        updated_by_user_id=current_user_id,
+                    )
                     conn.commit()
-                    override = conn.execute('''
-                        SELECT * FROM product_overrides
-                        WHERE tenant_id = ? AND brand = ? AND reference = ?
-                    ''', (tenant_id, brand, reference)).fetchone()
-                    flash("スタッフの体験談を追加して文章を生成します", "warning")
+                    saved_staff_additional_input = staff_additional_input_in_form
 
                 canonical = {}
                 for f in fields:
                     ov = override[f] if override and override[f] else ''
                     ms = master[f] if master and master[f] else ''
                     canonical[f] = ov if ov else ms
-
-                editor_note = (override['editor_note'] if override and 'editor_note' in override.keys() and override['editor_note'] else '')
+            except Exception as e:
+                _flash_error_from_exception(
+                    e,
+                    {"route": "staff_search", "action": "save_staff_additional_input", "brand": brand, "reference": reference},
+                )
+                return redirect(url_for('staff_search', brand=brand, reference=reference))
             finally:
                 try:
                     conn.close()
@@ -1815,7 +1845,7 @@ def staff_search():
                     'include_wearing_scenes': include_wearing_scenes
                 },
                 'constraints': {'target_intro_chars': 1500, 'max_specs_chars': 1000},
-                'editor_note': editor_note,
+                'staff_additional_input': saved_staff_additional_input,
                 'reference_urls': reference_urls,
                 'reference_url': reference_urls[0] if reference_urls else "",
             }
@@ -1940,6 +1970,7 @@ def staff_search():
                 reference=reference,
                 master=master,
                 override=override,
+                staff_additional_input=saved_staff_additional_input,
                 canonical=canonical,
                 overridden_fields=overridden_fields,
 
@@ -2124,6 +2155,7 @@ def staff_search():
                 reference=reference,
                 master=master,
                 override=override,
+                staff_additional_input=(payload.get("staff_additional_input") or payload.get("editor_note") or ""),
                 canonical=canonical,
                 overridden_fields=overridden_fields,
 
@@ -2189,6 +2221,7 @@ def staff_search():
     override_warning = None
     import_conflict_warning = None
     history = []
+    staff_additional_input = ""
 
     if brand and reference:
         conn = get_db_connection()
@@ -2202,6 +2235,13 @@ def staff_search():
                 SELECT * FROM product_overrides
                 WHERE tenant_id = ? AND brand = ? AND reference = ?
             ''', (tenant_id, brand, reference)).fetchone()
+
+            staff_row = conn.execute('''
+                SELECT content
+                FROM staff_additional_inputs
+                WHERE tenant_id = ? AND brand = ? AND reference = ?
+            ''', (tenant_id, brand, reference)).fetchone()
+            staff_additional_input = (staff_row['content'] if staff_row and staff_row['content'] else '').strip()
 
             for f in fields:
                 ov = override[f] if override and override[f] else ''
@@ -2240,6 +2280,7 @@ def staff_search():
         reference=reference,
         master=master,
         override=override,
+        staff_additional_input=staff_additional_input,
         canonical=canonical,
         overridden_fields=overridden_fields,
         warnings=warnings,

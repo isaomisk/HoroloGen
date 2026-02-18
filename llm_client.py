@@ -96,17 +96,17 @@ SYSTEM_BASE = """あなたは正規時計店で使用される、商品説明文
 - 比喩は控えめに許可するが、誇張は禁止
 
 ────────────────────
-【editor_note の扱いルール（重要）】
+【スタッフ追加入力 の扱いルール（重要）】
 ────────────────────
-editor_note は「販売現場での実体験・所感・技術的ポイント」として扱う。
+スタッフ追加入力は「販売現場での実体験・所感・技術的ポイント」として扱う。
 いかなる場合も、内容を削除・無視してはならない。
 
 ■ casual_friendly の場合
-- editor_note の一人称「私は」を保持してよい
+- スタッフ追加入力の一人称「私は」を保持してよい
 - 会話的・率直な表現として自然に本文へ組み込む
 
 ■ luxury / magazine_story / practical の場合
-- editor_note の内容は必ず反映する
+- スタッフ追加入力の内容は必ず反映する
 - 以下の変換を行うこと：
   - 過度に砕けた表現は抑制する
   - 感情的断定は避ける
@@ -505,7 +505,7 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
     constraints = payload.get("constraints", {}) or {}
 
     reference_url = (payload.get("reference_url") or payload.get("research", {}).get("reference_url") or "").strip()
-    editor_note = (payload.get("editor_note") or "").strip()
+    staff_additional_input = (payload.get("staff_additional_input") or payload.get("editor_note") or "").strip()
 
     brand = product.get("brand", "")
     ref = product.get("reference", "")
@@ -565,8 +565,8 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 - include_brand_profile: {include_brand_profile}
 - include_wearing_scenes: {include_wearing_scenes}
 
-[editor_note（スタッフの主観・経験・逸話。intro_textに必ず反映）]
-{editor_note if editor_note else "(未入力)"}
+[スタッフ追加入力（スタッフの主観・経験・逸話。intro_textに必ず反映）]
+{staff_additional_input if staff_additional_input else "(未入力)"}
 
 [canonical_specs（確定事実）]
 {json.dumps(facts_norm, ensure_ascii=False, indent=2)}
@@ -577,7 +577,10 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 {ref_block}
 
 [重要ルール]
-- intro_text には editor_note の内容を必ず含める（未入力の場合は触れない）
+- intro_text にはスタッフ追加入力の内容を自然に統合する（未入力の場合は触れない）
+- スタッフ追加入力を末尾にラベル付きで機械的に追記しない
+- スタッフ追加入力は必要に応じて言い換えてよいが、意味は保持する
+- 事実の捏造はしない
 - 語り手は「正規時計店スタッフ」。一人称の使い方はトーン規定に従う
 - 事実の優先順位：canonical_specs > remarks > reference_url本文
 - 矛盾がある場合は必ず上位を採用する

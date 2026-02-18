@@ -238,25 +238,26 @@
       </div>
     </details>
 
-    <div class="form-group" style="grid-column: 1 / -1; margin-top: 15px;">
-      <label for="editor_note">スタッフ追加入力（必ず文章に反映されます）</label>
-      <textarea
-        id="editor_note"
-        name="editor_note"
-        rows="4"
-        placeholder="接客での実体験・商品の魅力・エピソードなどを自由に記載してください。">{{ override.editor_note if override and override.editor_note else '' }}</textarea>
-
-      <small style="color:#666;">
-        ※ここに入力した内容は、”スペック上書き保存”をクリックすると商品紹介文に必ず反映されます。
-      </small>
-      <input type="hidden" id="saved_editor_note" value="{{ override.editor_note if override and override.editor_note else '' }}">
-    </div>
-
     <button type="submit" class="v0-override-save-btn" style="margin-top: 20px;">オーバーライドを保存</button>
   </form>
 </section>
 
-  <section class="v0-card v0-card-article">
+<section class="v0-card">
+  <h2>スタッフ追加入力</h2>
+  <div class="form-group" style="margin-top: 10px;">
+    <label for="staff_additional_input">スタッフ追加入力（必ず文章に反映されます）</label>
+    <textarea
+      id="staff_additional_input"
+      rows="4"
+      placeholder="接客での実体験・商品の魅力・エピソードなどを自由に記載してください。">{{ staff_additional_input or '' }}</textarea>
+    <small style="color:#666;">
+      ※生成時に内容を保存し、商品紹介文へ自然に反映します。
+    </small>
+    <input type="hidden" id="saved_staff_additional_input" value="{{ staff_additional_input or '' }}">
+  </div>
+</section>
+
+<section class="v0-card v0-card-article">
   <h2><span class="v0-title-icon"><i data-lucide="sparkles"></i></span>記事生成（ダミー）</h2>
   <div class="v0-article-meta">
     <div class="v0-article-meta-left">プラン: {{ plan_mode }} / 対象月: {{ month_key }}</div>
@@ -272,6 +273,7 @@
     <input type="hidden" name="action" value="generate_dummy">
     <input type="hidden" name="brand" value="{{ brand }}">
     <input type="hidden" name="reference" value="{{ reference }}">
+    <input type="hidden" name="staff_additional_input" value="{{ staff_additional_input or '' }}">
     {% if locked %}
       <input type="hidden" name="tone" value="{{ generation_tone if generation_tone else 'casual_friendly' }}">
       <input type="hidden" name="include_brand_profile" value="{{ 'on' if generation_include_brand_profile else 'off' }}">
@@ -579,8 +581,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const refCount = document.getElementById('ref_count');
   const refLoading = document.getElementById('ref_loading');
   const generateForm = document.querySelector('form.v0-article-form');
-  const editorNote = document.getElementById('editor_note');
-  const savedEditorNote = document.getElementById('saved_editor_note');
+  const staffAdditionalInput = document.getElementById('staff_additional_input');
+  const savedStaffAdditionalInput = document.getElementById('saved_staff_additional_input');
 
   if (!brandSelect || !referenceInput || !referenceSuggestions || !refCount || !refLoading) {
     return;
@@ -698,19 +700,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  if (generateForm && editorNote) {
+  if (generateForm && staffAdditionalInput) {
     generateForm.addEventListener('submit', () => {
-      let hiddenEditorNote = generateForm.querySelector('input[name="editor_note"]');
-      if (!hiddenEditorNote) {
-        hiddenEditorNote = document.createElement('input');
-        hiddenEditorNote.type = 'hidden';
-        hiddenEditorNote.name = 'editor_note';
-        generateForm.appendChild(hiddenEditorNote);
+      let hiddenStaffInput = generateForm.querySelector('input[name="staff_additional_input"]');
+      if (!hiddenStaffInput) {
+        hiddenStaffInput = document.createElement('input');
+        hiddenStaffInput.type = 'hidden';
+        hiddenStaffInput.name = 'staff_additional_input';
+        generateForm.appendChild(hiddenStaffInput);
       }
 
-      const current = (editorNote.value || '').trim();
-      const saved = savedEditorNote ? (savedEditorNote.value || '').trim() : '';
-      hiddenEditorNote.value = current;
+      const current = (staffAdditionalInput.value || '').trim();
+      const saved = savedStaffAdditionalInput ? (savedStaffAdditionalInput.value || '').trim() : '';
+      hiddenStaffInput.value = current;
 
       if (current !== '' && current !== saved) {
         window.alert("スタッフの体験談を追加して文章を生成します");
