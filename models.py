@@ -223,7 +223,7 @@ def init_db():
         )
     ''')
 
-    # product_overrides テーブル（editor_note 追加）
+    # product_overrides テーブル（Canonical override）
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS product_overrides (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -246,6 +246,20 @@ def init_db():
             remarks TEXT,
             editor_note TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(tenant_id, brand, reference)
+        )
+    ''')
+
+    # staff_additional_inputs テーブル（スタッフ追加入力）
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS staff_additional_inputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            brand TEXT NOT NULL,
+            reference TEXT NOT NULL,
+            content TEXT,
+            updated_by_user_id INTEGER,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(tenant_id, brand, reference)
         )
@@ -328,6 +342,10 @@ def init_db():
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_master_products_tenant_brand_reference
         ON master_products (tenant_id, brand, reference)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_staff_additional_inputs_tenant_brand_reference
+        ON staff_additional_inputs (tenant_id, brand, reference)
     """)
 
     conn.commit()
