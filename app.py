@@ -1643,6 +1643,11 @@ def staff_search():
         "total_product_count": total_product_count,
         "brand_summaries": brand_summaries,
     }
+    summary_defaults = dict(summary_defaults or {})
+    summary_defaults.pop("staff_additional_input", None)
+
+    debug_defaults = dict(debug_defaults or {})
+    debug_defaults.pop("staff_additional_input", None)
 
     if request.method == 'POST':
         action = request.form.get('action', '').strip()
