@@ -184,7 +184,8 @@ def login_required(view_func):
     @wraps(view_func)
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
-            return redirect(url_for("auth_login", next=request.path))
+            login_route = "admin_login" if request.path.startswith("/admin") else "auth_login"
+            return redirect(url_for(login_route, next=request.path))
         if session.get("must_change_password") and request.endpoint not in {"auth_change_password", "auth_logout", "static"}:
             return redirect(url_for("auth_change_password"))
         return view_func(*args, **kwargs)
@@ -195,7 +196,7 @@ def require_admin(view_func):
     @wraps(view_func)
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
-            return redirect(url_for("auth_login", next=request.path))
+            return redirect(url_for("admin_login", next=request.path))
         if (session.get("user_role") or "") != "platform_admin":
             abort(403)
         return view_func(*args, **kwargs)
@@ -209,6 +210,51 @@ def _safe_int(raw) -> int | None:
         return int(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _authenticate_password_login(db, email: str, password: str) -> tuple[dict[str, object] | None, str | None]:
+    """
+    Returns:
+      - (user_info, None) on success
+      - (None, reason_code) on expected auth failure
+    """
+    row = db.execute(
+        select(User).where(User.email == email)
+    ).scalar_one_or_none()
+    if not row:
+        return None, "email_not_found"
+    if not bool(row.is_active):
+        return None, "inactive"
+
+    raw_user = db.execute(
+        select(User.id, User.email, User.role, User.tenant_id).where(User.id == row.id)
+    ).one_or_none()
+    if raw_user is None:
+        return None, "email_not_found"
+
+    pw_row = db.execute(
+        text("SELECT password_hash, must_change_password FROM users WHERE id = :uid"),
+        {"uid": row.id},
+    ).one_or_none()
+    password_hash = (pw_row[0] if pw_row else "") or ""
+    must_change_password = bool(pw_row[1]) if pw_row else True
+
+    if not password_hash:
+        return None, "password_unset"
+
+    try:
+        if not check_password_hash(password_hash, password):
+            return None, "password_mismatch"
+    except Exception:
+        return None, "password_mismatch"
+
+    return {
+        "id": raw_user.id,
+        "email": raw_user.email,
+        "role": raw_user.role,
+        "tenant_id": raw_user.tenant_id,
+        "must_change_password": must_change_password,
+    }, None
 
 
 def _is_platform_admin() -> bool:
@@ -614,55 +660,111 @@ def auth_login():
         next_path = _safe_next_path(request.form.get("next", ""))
 
         if not email or not password:
-            flash("メールアドレスとパスワードを入力してください。", "warning")
-            return render_template('auth_login.html', next_path=next_path, email=email)
+            flash("メールアドレスまたはパスワードが違います", "warning")
+            return redirect(url_for("auth_login", next=next_path))
 
         db = get_auth_session()
         try:
-            row = db.execute(
-                select(User).where(
-                    User.email == email,
-                    User.is_active.is_(True),
-                )
-            ).scalar_one_or_none()
-            if not row:
-                flash("メールアドレスまたはパスワードが正しくありません。", "warning")
-                return render_template('auth_login.html', next_path=next_path, email=email)
-
-            raw_user = db.execute(
-                select(User.id, User.email, User.role, User.tenant_id).where(User.id == row.id)
-            ).one()
-            pw_row = db.execute(
-                text("SELECT password_hash, must_change_password FROM users WHERE id = :uid"),
-                {"uid": row.id},
-            ).one_or_none()
-            password_hash = (pw_row[0] if pw_row else "") or ""
-            must_change_password = bool(pw_row[1]) if pw_row else True
-
-            if not password_hash or not check_password_hash(password_hash, password):
-                flash("メールアドレスまたはパスワードが正しくありません。", "warning")
-                return render_template('auth_login.html', next_path=next_path, email=email)
+            user_info, reason = _authenticate_password_login(db, email=email, password=password)
+            if reason:
+                flash("メールアドレスまたはパスワードが違います", "warning")
+                return redirect(url_for("auth_login", next=next_path))
 
             session.clear()
-            session['user_id'] = raw_user.id
-            session['user_email'] = raw_user.email
-            session['user_role'] = raw_user.role
-            session['tenant_id'] = raw_user.tenant_id
-            session['must_change_password'] = must_change_password
+            session['user_id'] = user_info["id"]
+            session['user_email'] = user_info["email"]
+            session['user_role'] = user_info["role"]
+            session['tenant_id'] = user_info["tenant_id"]
+            session['must_change_password'] = bool(user_info["must_change_password"])
 
-            if must_change_password:
+            if session['must_change_password']:
                 session["post_change_next"] = next_path or url_for("staff_search")
                 return redirect(url_for('auth_change_password'))
             if next_path:
                 return redirect(next_path)
             return redirect(url_for('staff_search'))
-        except Exception as e:
-            _flash_error_from_exception(e, {"route": "auth_login"})
-            return render_template('auth_login.html', next_path=next_path, email=email)
+        except Exception:
+            app.logger.exception("auth_login failed")
+            flash("メールアドレスまたはパスワードが違います", "warning")
+            return redirect(url_for("auth_login", next=next_path))
         finally:
             db.close()
 
-    return render_template('auth_login.html', next_path=next_path, email="")
+    return render_template(
+        'auth_login.html',
+        next_path=next_path,
+        email="",
+        page_title="ログイン - HoroloGen",
+        heading="ログイン",
+        description="メールアドレスとパスワードでログインしてください。",
+        form_action=url_for("auth_login"),
+    )
+
+
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    next_path = _safe_next_path(request.args.get("next", ""))
+    if request.method == 'POST':
+        email = _normalize_email(request.form.get('email', ''))
+        password = request.form.get('password', '')
+        next_path = _safe_next_path(request.form.get("next", ""))
+        if not next_path:
+            next_path = url_for("admin_users")
+
+        if not email or not password:
+            flash("メールアドレスとパスワードを入力してください。", "warning")
+            return redirect(url_for("admin_login", next=next_path))
+
+        db = get_auth_session()
+        try:
+            user_info, reason = _authenticate_password_login(db, email=email, password=password)
+            if reason == "email_not_found":
+                flash("メールアドレスが登録されていません。", "warning")
+                return redirect(url_for("admin_login", next=next_path))
+            if reason == "password_unset":
+                flash("パスワードが設定されていません。管理者に再発行を依頼してください。", "warning")
+                return redirect(url_for("admin_login", next=next_path))
+            if reason == "password_mismatch":
+                flash("パスワードが正しくありません。", "warning")
+                return redirect(url_for("admin_login", next=next_path))
+            if reason == "inactive":
+                flash("このアカウントは無効化されています。", "warning")
+                return redirect(url_for("admin_login", next=next_path))
+            if reason:
+                flash("ログインに失敗しました。", "warning")
+                return redirect(url_for("admin_login", next=next_path))
+
+            if (user_info.get("role") or "") != "platform_admin":
+                flash("管理者権限がありません。", "warning")
+                return redirect(url_for("admin_login", next=next_path))
+
+            session.clear()
+            session['user_id'] = user_info["id"]
+            session['user_email'] = user_info["email"]
+            session['user_role'] = user_info["role"]
+            session['tenant_id'] = user_info["tenant_id"]
+            session['must_change_password'] = bool(user_info["must_change_password"])
+
+            if session['must_change_password']:
+                session["post_change_next"] = next_path
+                return redirect(url_for('auth_change_password'))
+            return redirect(next_path)
+        except Exception:
+            app.logger.exception("admin_login failed")
+            flash("ログインに失敗しました。", "warning")
+            return redirect(url_for("admin_login", next=next_path))
+        finally:
+            db.close()
+
+    return render_template(
+        'auth_login.html',
+        next_path=next_path or url_for("admin_users"),
+        email="",
+        page_title="Adminログイン - HoroloGen",
+        heading="管理ログイン",
+        description="管理画面用のメールアドレスとパスワードを入力してください。",
+        form_action=url_for("admin_login"),
+    )
 
 
 @app.route('/auth/verify')

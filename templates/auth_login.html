@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}ログイン - HoroloGen{% endblock %}
+{% block title %}{{ page_title or 'ログイン - HoroloGen' }}{% endblock %}
 
 {% block content %}
-<h1>ログイン</h1>
-<p style="margin-bottom: 16px; color: #555;">メールアドレスとパスワードでログインしてください。</p>
+<h1>{{ heading or 'ログイン' }}</h1>
+<p style="margin-bottom: 16px; color: #555;">{{ description or 'メールアドレスとパスワードでログインしてください。' }}</p>
 
-<form method="POST">
+<form method="POST" action="{{ form_action or '' }}">
   <input type="hidden" name="next" value="{{ next_path or '' }}">
   <div class="form-group">
     <label for="email">メールアドレス</label>
