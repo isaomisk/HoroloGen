@@ -549,6 +549,7 @@ def fetch_page_text(url: str, max_chars: int = 8000, min_chars: int = 600) -> Tu
         "url": url,
         "allowed": False,
         "host": "",
+        "parsed_host": "",
         "fetch_ok": False,
         "status": None,
         "method": "",
@@ -561,6 +562,14 @@ def fetch_page_text(url: str, max_chars: int = 8000, min_chars: int = 600) -> Tu
     if not url:
         meta["filtered_reason"] = "empty_url"
         return "", False, meta
+
+    try:
+        parsed_url = urlparse(url)
+        netloc = (parsed_url.netloc or "").split("@")[-1].split(":")[0].strip().lower()
+        parsed_host = netloc[4:] if netloc.startswith("www.") else netloc
+        meta["parsed_host"] = parsed_host
+    except Exception:
+        meta["parsed_host"] = ""
 
     allowed, host, _policy = get_source_policy(url)
     meta["allowed"] = bool(allowed)
@@ -584,35 +593,113 @@ def fetch_page_text(url: str, max_chars: int = 8000, min_chars: int = 600) -> Tu
     for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
         tag.decompose()
 
-    # できるだけ本文っぽいところを拾う
-    candidates = []
-    for selector in ["main", "article", '[role="main"]', ".article", ".post", ".content", ".entry-content", ".post-content"]:
-        el = soup.select_one(selector)
-        if el:
-            candidates.append((selector, el))
+    def _extract_text_from_root(root) -> str:
+        parts: List[str] = []
+        for el in root.find_all(["h1", "h2", "h3", "p", "li"]):
+            t = el.get_text(" ", strip=True)
+            if not t or len(t) < 15:
+                continue
+            parts.append(t)
+        if not parts:
+            text_all = root.get_text("\n", strip=True)
+            lines = [l.strip() for l in text_all.splitlines() if len(l.strip()) >= 15]
+            parts = lines
+        return "\n".join(parts).strip()
 
-    if candidates:
-        sel, root = candidates[0]
-        meta["method"] = f"selector:{sel}"
+    def _readability_like_fallback(doc_soup) -> str:
+        # 1回だけの軽量フォールバック: 長文pを多く含む要素を優先
+        best_text = ""
+        best_len = 0
+        for sel in ["main", "article", '[role="main"]', "body"]:
+            node = doc_soup.select_one(sel)
+            if not node:
+                continue
+            txt = _extract_text_from_root(node)
+            if len(txt) > best_len:
+                best_text = txt
+                best_len = len(txt)
+        return best_text
+
+    normalized_host = (meta.get("parsed_host") or "").lower()
+    is_hodinkee_jp = normalized_host == "hodinkee.jp"
+
+    text = ""
+    selected_method = "fallback:document"
+
+    if is_hodinkee_jp:
+        selected_method = "hodinkee:enter"
+        # hodinkee.jp は selector固定より、本文量が最大のブロックを採用する方が安定する
+        roots = soup.find_all("article")
+        if not roots:
+            main_node = soup.select_one("main")
+            if main_node:
+                roots = [main_node]
+        if not roots:
+            role_main = soup.select_one('[role="main"]')
+            if role_main:
+                roots = [role_main]
+        if not roots:
+            body = soup.body
+            if body:
+                roots = body.find_all("div", recursive=False) or [body]
+
+        best_text = ""
+        best_score = -1
+        best_total = -1
+        for root in roots:
+            # 候補ごとに独立して不要要素を除去する
+            root_soup = BeautifulSoup(str(root), "html.parser")
+            for tag in root_soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
+                tag.decompose()
+            p_score = 0
+            for p in root_soup.find_all("p"):
+                p_text = p.get_text(" ", strip=True)
+                if len(p_text) >= 15:
+                    p_score += len(p_text)
+            candidate_text = _extract_text_from_root(root_soup)
+            total_score = len(candidate_text)
+            if p_score > best_score or (p_score == best_score and total_score > best_total):
+                best_score = p_score
+                best_total = total_score
+                best_text = candidate_text
+
+        text = best_text.strip()
+        if text:
+            selected_method = "hodinkee:largest_block"
+
+        if text and len(text) < min_chars:
+            fb_text = _readability_like_fallback(soup)
+            if len(fb_text) > len(text):
+                text = fb_text
+                selected_method = "hodinkee:fallback:readability_like"
     else:
-        root = soup
-        meta["method"] = "fallback:document"
+        selectors = ["main", "article", '[role="main"]', ".article", ".post", ".content", ".entry-content", ".post-content"]
+        for selector in selectors:
+            root = soup.select_one(selector)
+            if not root:
+                continue
+            candidate_text = _extract_text_from_root(root)
+            if not candidate_text:
+                continue
+            if len(candidate_text) >= min_chars:
+                text = candidate_text
+                selected_method = f"selector:{selector}"
+                break
+            if len(candidate_text) > len(text):
+                text = candidate_text
+                selected_method = f"selector:{selector}(short)"
 
-    parts = []
-    for el in root.find_all(["h1", "h2", "h3", "p", "li"]):
-        text = el.get_text(" ", strip=True)
         if not text:
-            continue
-        if len(text) < 15:
-            continue
-        parts.append(text)
+            text = _extract_text_from_root(soup)
+            selected_method = "fallback:document"
 
-    if not parts:
-        text_all = root.get_text("\n", strip=True)
-        lines = [l.strip() for l in text_all.splitlines() if len(l.strip()) >= 15]
-        parts = lines
+        if text and len(text) < min_chars:
+            fb_text = _readability_like_fallback(soup)
+            if len(fb_text) > len(text):
+                text = fb_text
+                selected_method = f"{selected_method}->fallback:readability_like"
 
-    text = "\n".join(parts).strip()
+    meta["method"] = selected_method
 
     if not text:
         meta["filtered_reason"] = "no_text_extracted"
@@ -1008,19 +1095,61 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
     product = payload.get("product", {}) or {}
     ref_code = (product.get("reference") or "").strip()
 
-    # 参考URL（最大3本）
-    reference_urls = payload.get("reference_urls") or []
-    if not isinstance(reference_urls, list):
-        reference_urls = []
+    # 参考URL（最大4本: ja最大3 + en最大1 を想定）
+    raw_reference_urls = payload.get("reference_urls") or []
+    if not isinstance(raw_reference_urls, list):
+        raw_reference_urls = []
+
+    reference_url_entries: List[Dict[str, str]] = []
+    for item in raw_reference_urls:
+        if isinstance(item, dict):
+            u = (item.get("url") or "").strip()
+            if not u:
+                continue
+            lang = (item.get("lang") or "ja").strip().lower()
+            if lang not in {"ja", "en"}:
+                lang = "ja"
+            source = (item.get("source") or "manual").strip() or "manual"
+            reference_url_entries.append({"url": u, "lang": lang, "source": source})
+        elif isinstance(item, str):
+            u = item.strip()
+            if u:
+                reference_url_entries.append({"url": u, "lang": "ja", "source": "manual"})
 
     legacy = (payload.get("reference_url") or payload.get("research", {}).get("reference_url") or "").strip()
     if legacy:
-        reference_urls = [legacy] + [u for u in reference_urls if u != legacy]
+        reference_url_entries = [{"url": legacy, "lang": "ja", "source": "manual"}] + [
+            x for x in reference_url_entries if x.get("url") != legacy
+        ]
 
-    reference_urls = [u.strip() for u in reference_urls if isinstance(u, str) and u.strip()][:3]
+    deduped_entries: List[Dict[str, str]] = []
+    seen_urls = set()
+    for entry in reference_url_entries:
+        u = (entry.get("url") or "").strip()
+        if not u or u in seen_urls:
+            continue
+        seen_urls.add(u)
+        deduped_entries.append(entry)
+    reference_url_entries = deduped_entries[:4]
+
+    raw_reference_prefetch = payload.get("reference_prefetch") or []
+    prefetch_by_url: Dict[str, Dict[str, Any]] = {}
+    if isinstance(raw_reference_prefetch, list):
+        for item in raw_reference_prefetch:
+            if not isinstance(item, dict):
+                continue
+            u = (item.get("url") or "").strip()
+            if not u or u in prefetch_by_url:
+                continue
+            meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+            prefetch_by_url[u] = {
+                "text": (item.get("text") or ""),
+                "ok": bool(item.get("ok", False)),
+                "meta": meta,
+            }
 
     per_url_debug: List[Dict[str, Any]] = []
-    per_url_texts: List[Dict[str, str]] = []
+    per_url_texts: List[Dict[str, Any]] = []
 
     best_url = ""
     best_text = ""
@@ -1029,38 +1158,80 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
     chosen_reason = ""
 
     # URL0件でも debug を残す
-    if not reference_urls:
+    if not reference_url_entries:
         per_url_debug.append({
             "url": "(no urls)",
             "allowed": False,
             "host": "",
+            "parsed_host": "",
             "fetch_ok": False,
+            "fetch_status": "fail",
             "status": None,
             "method": "",
             "chars": 0,
+            "char_count": 0,
+            "lang": "ja",
+            "source": "manual",
             "ok": False,
+            "prefetch_used": False,
             "preview": "",
             "filtered_reason": "no_reference_urls_in_payload",
             "ref_hit": False,
         })
 
     # 1) 取得
-    for u in reference_urls:
-        text, ok, meta = fetch_page_text(u)
+    for entry in reference_url_entries:
+        u = (entry.get("url") or "").strip()
+        lang = (entry.get("lang") or "ja").strip().lower()
+        if lang not in {"ja", "en"}:
+            lang = "ja"
+        source = (entry.get("source") or "manual").strip() or "manual"
+        prefetch_used = False
+        if u in prefetch_by_url:
+            prefetch_item = prefetch_by_url.get(u) or {}
+            text = (prefetch_item.get("text") or "")
+            ok = bool(prefetch_item.get("ok", False))
+            raw_meta = prefetch_item.get("meta") if isinstance(prefetch_item.get("meta"), dict) else {}
+            meta = {
+                "allowed": raw_meta.get("allowed"),
+                "host": raw_meta.get("host"),
+                "parsed_host": raw_meta.get("parsed_host"),
+                "fetch_ok": raw_meta.get("fetch_ok"),
+                "status": raw_meta.get("status"),
+                "method": raw_meta.get("method"),
+                "extracted_chars": raw_meta.get("extracted_chars", 0),
+                "extracted_preview": raw_meta.get("extracted_preview", ""),
+                "filtered_reason": raw_meta.get("filtered_reason", ""),
+            }
+            prefetch_used = True
+        else:
+            text, ok, meta = fetch_page_text(u)
         hit = _ref_hit(u, text, ref_code)
         meta["ref_hit"] = bool(hit)
 
-        per_url_texts.append({"url": u, "text": text or ""})
+        per_url_texts.append({
+            "url": u,
+            "text": text or "",
+            "lang": lang,
+            "source": source,
+            "ref_hit": bool(hit),
+        })
 
         per_url_debug.append({
             "url": u,
+            "lang": lang,
+            "source": source,
             "allowed": meta.get("allowed"),
             "host": meta.get("host"),
+            "parsed_host": meta.get("parsed_host", ""),
             "fetch_ok": meta.get("fetch_ok"),
+            "fetch_status": "ok" if meta.get("fetch_ok") else "fail",
             "status": meta.get("status"),
             "method": meta.get("method"),
             "chars": meta.get("extracted_chars", 0),
+            "char_count": int(len(text or "")),
             "ok": bool(ok),
+            "prefetch_used": bool(prefetch_used),
             "preview": meta.get("extracted_preview", ""),
             "filtered_reason": meta.get("filtered_reason", ""),
             "ref_hit": bool(hit),
@@ -1094,16 +1265,30 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
         else:
             chosen_reason = "参考URLなし（本文なし）"
 
-    # 3) 本文結合（各URL最大2500 / 合計最大8000）
+    # 3) 本文結合（各URL最大2500 / 合計最大10000）
     combined_blocks = []
     total = 0
     for item in per_url_texts:
         t = (item.get("text") or "").strip()
         if not t:
             continue
+        url = item.get("url") or ""
+        lang = item.get("lang") or "ja"
+        source = item.get("source") or "manual"
+        hit = bool(item.get("ref_hit"))
         t = t[:2500]
-        block = f"URL: {item['url']}\n本文抜粋:\n{t}"
-        if total + len(block) > 8000:
+        lang_note = ""
+        if lang == "en":
+            lang_note = "この記事は英語です。定性情報のみを参考にし、翻訳調にせず自然な日本語で書いてください。\n"
+        block = (
+            f"URL: {url}\n"
+            f"lang: {lang}\n"
+            f"source: {source}\n"
+            f"ref_hit: {hit}\n"
+            f"{lang_note}"
+            f"本文抜粋:\n{t}"
+        )
+        if total + len(block) > 10000:
             break
         combined_blocks.append(block)
         total += len(block)
