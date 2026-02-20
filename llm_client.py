@@ -151,9 +151,32 @@ TONE_PROFILES = {
         "chars_with_url": (1200, 1600),
         "chars_no_url": (700, 1100),
         "instructions": """【文体・狙い】
-- 実用性重視、読みやすい（です・ます調）
-- 使い勝手（装着感、視認性、耐久性、メンテ性）を中心に
-- 煽り・断定的な購買誘導は禁止
+- 製品情報サイトの紹介文のような、事実ベースで読みやすい文体
+- です・ます調で、簡潔・平易に
+- 一人称「私は」の使用は装着感の評価など実体験に限定（1〜2回まで）
+- 一文は短〜中程度。情報を整理して伝える
+
+【このトーンで必ずやること】
+- 実用面の情報を優先して構成する
+  優先順: 装着感 → 視認性 → 防水性能 → 操作性 → メンテナンス性 → 耐久性
+- スペック情報を本文中に自然に組み込む（ただし羅列はしない）
+- 具体的な使用場面を挙げる（ビジネス、アウトドア、水辺など）
+- 素材の実用的な特徴に触れる（SSの耐傷性、チタンの軽さ、金無垢の重さなど）
+- 客観的なトーンを維持する
+
+【このトーンで禁止すること】
+- ブランドの歴史や逸話（1文の簡潔な背景説明は許可）
+- 感嘆や情緒的な表現（「美しい」「感動」「うっとり」等）
+- 「！」の使用
+- 比喩表現
+- 他モデルとのコレクター的な比較
+- 投資価値・資産性への言及
+- 来店誘導
+
+【語彙の方向性】
+- 使う語彙例：「装着感」「視認性」「操作性」「日常使い」「耐久性」「メンテナンス」「実用的」
+- 避ける語彙例：「崇高」「官能的」「物語」「象徴」「キラキラ」「映える」
+- 中立的で情報的な語彙を選ぶ
 """,
     },
     "luxury": {
@@ -161,10 +184,29 @@ TONE_PROFILES = {
         "chars_with_url": (1500, 2000),
         "chars_no_url": (800, 1200),
         "instructions": """【文体・狙い】
-- 高級時計専門店らしい格調高い文体（です・ます調）
-- ブランドの歴史や技術的価値、信頼性、長期使用価値を重視
-- 誇張・煽りは禁止（資産性に触れる場合も断定しない）
-- 主観は「私は〜と考えます」の形で控えめに
+- 高級時計専門店のベテランスタッフが、時計に詳しい顧客に向けて書く文体
+- です・ます調だが、格調を保つ
+- 主語は省略傾向。対象物（時計、ムーブメント、ケース）を主語にする
+- 一人称「私は」は評価の結論・提案文でのみ使用する
+
+【このトーンで必ずやること】
+- 他モデル・他リファレンスとの比較を積極的に入れる
+- 数値は具体的に記述する（ケース厚、振動数、パワーリザーブ、部品点数など）
+- ムーブメントの技術的特徴に言及する
+- ブランドの歴史的文脈の中に製品を位置づける
+- 括弧書きでの補足・注釈を許可する
+
+【このトーンで禁止すること】
+- 「！」の使用（句点「。」で終える）
+- 「おすすめです」「ぜひ」「いかがでしょうか」等の直接的な購買呼びかけ
+- 「〜ですよね」「〜しませんか？」等の共感・問いかけ型語尾
+- 専門用語の噛み砕き説明（読者は知っている前提で書く）
+- 日常生活のエピソードや個人的な体験談
+- 来店誘導の文言
+
+【語彙の方向性】
+- 使う語彙例：「搭載」「継承」「採用」「施される」「呈する」「備える」「与えられる」
+- 避ける語彙例：「かわいい」「すごい」「ぴったり」「お手頃」「コスパ」「キラキラ」
 """,
     },
     "casual_friendly": {
@@ -172,11 +214,29 @@ TONE_PROFILES = {
         "chars_with_url": (1200, 1600),
         "chars_no_url": (700, 1100),
         "instructions": """【文体・狙い】
-- 読みやすく親しみやすい（です・ます調）
-- 日常での使いやすさ（着用シーン、装着感、防水、扱いやすさ）を重視
-- 専門用語は噛み砕いて説明
-- 店頭でお客様に話しかけるような自然な口調
-- 一人称「私は」を積極的に使用してよい
+- 正規時計店のスタッフが、時計に詳しくないお客様に店頭で説明しているような文体
+- です・ます調で、やわらかく会話的に
+- 一人称「私は」を積極的に使い、自分の体験や感想を交える
+- 一文は短く、テンポよく
+
+【このトーンで必ずやること】
+- 「私が実際に手に取って感じたこと」「私が好きな理由」など主観を前面に出す
+- 専門用語を使う場合は必ず噛み砕いた説明を添える
+- 着用シーン（ビジネス、カジュアル、デートなど）を具体的に提案する
+- 「〜ですよね」「〜なんです」等の共感を求める語尾を使う
+- 来店誘導を自然に組み込む（「ぜひ店頭でご覧ください」等）
+
+【このトーンで禁止すること】
+- 他モデルとの詳細なスペック比較（触れても簡潔に）
+- 長い括弧書きの注釈
+- 部品点数、振動数、石数などの技術的数値の羅列
+- ブランド歴史の深い文脈説明（触れても2〜3文以内）
+- 「だ・である」調の混入
+
+【語彙の方向性】
+- 使う語彙例：「つけ心地」「馴染む」「映える」「使いやすい」「合わせやすい」「気に入っている」「おすすめ」
+- 避ける語彙例：「搭載」→「載っている/入っている」、「呈する」「施される」等の硬い受身表現
+- 「！」の使用を許可するが、1段落に1回まで
 """,
     },
     "magazine_story": {
@@ -184,10 +244,30 @@ TONE_PROFILES = {
         "chars_with_url": (1500, 2000),
         "chars_no_url": (900, 1300),
         "instructions": """【文体・狙い】
-- 背景や文脈を物語的に構成（です・ます調）
-- 感情に訴えるが誇張はしない
-- 比喩は控えめに許可
-- 事実の断定は canonical_specs / remarks / reference_url本文の範囲のみ
+- 時計専門メディアのライターが、読み物として楽しめる記事を書く文体
+- です・ます調をベースに、情緒的な表現をやや許容する
+- 一人称「私は」は記事の導入や結びで使用可。ただし記事の主役にはならない
+- 長文と短文の緩急をつけ、読者を引き込むリズムを作る
+
+【このトーンで必ずやること】
+- 時系列に沿った展開で構成する（誕生→発展→現在の意義）
+- 製品を歴史的・文化的文脈の中に位置づける
+- 人物のエピソードや逸話を織り込む（ブランド創設者、デザイナー、著名な愛用者など）
+- 導入で読者の興味を引くフック（印象的な事実、意外性のある情報）を置く
+- 結びで製品の意義や価値を俯瞰的に述べる
+- 比喩は控えめに使用可（ただし1記事で2〜3回まで）
+
+【このトーンで禁止すること】
+- 「！」の使用（句点「。」で終える）
+- 直接的な購買呼びかけや来店誘導
+- スペックの羅列（技術情報は物語の流れの中に自然に組み込む）
+- 「私が買った理由」のような個人的な購買体験（書き手は観察者・語り手であり購入者ではない）
+- 「〜ですよね」「〜しませんか？」等の共感・問いかけ型語尾
+
+【語彙の方向性】
+- 使う語彙例：「物語」「背景」「転換点」「象徴」「継承」「回帰」「原点」
+- 時代や文化を語る言葉：「当時」「この頃」「時を経て」「今日では」
+- 避ける語彙例：「おすすめ」「ぜひ」「コスパ」「映える」
 """,
     },
 }
@@ -218,35 +298,194 @@ def build_system(tone: str, has_reference_text: bool) -> str:
 # ----------------------------
 TRUST_SOURCES: Dict[str, Dict[str, Any]] = {
     # A: ブランド公式
-    "omegawatches.com": {"category": "A", "allowed_use": ["facts", "context"]},
-    "omegawatches.jp": {"category": "A", "allowed_use": ["facts", "context"]},
-    "cartier.com": {"category": "A", "allowed_use": ["facts", "context"]},
-    "grand-seiko.com": {"category": "A", "allowed_use": ["facts", "context"]},
-    "iwc.com": {"category": "A", "allowed_use": ["facts", "context"]},
-    "panerai.com": {"category": "A", "allowed_use": ["facts", "context"]},
+    "arminstrom.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "arnoldandson.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "audemarspiguet.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "backesandstrauss.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "ballwatch.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "baume-et-mercier.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "bellross.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "blancpain.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "breguet.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "breitling.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "bulgari.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "cartier.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "cartier.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "centurytime.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "chanel.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "both"},
+    "chopard.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "chopard.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "chronoswiss.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "corum.ch": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "cvstos.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "delma.ch": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "eberhard-co-watches.ch": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "edox.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "franckmuller.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "franckmuller-japan.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "frederiqueconstant.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "furlanmarri.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "geraldcharles.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "girard-perregaux.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "glashuette-original.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "gorillawatches.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "grand-seiko.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "both"},
+    "h-moser.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "hamiltonwatch.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "harrywinston.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "hautlence.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "music-herbelin.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "herbelin.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "hublot.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "hysek.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "hytwatches.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "ikepod.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "iwc.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "jaeger-lecoultre.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "jaermann-stubi.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "junghans.de": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "lfreasonnance.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "longines.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "longines.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "louiserard.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "luminox.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "mauricelacroix.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "montblanc.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "moritz-grossmann.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "nomos-glashuette.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "norqain.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "omegawatches.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "omegawatches.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "oris.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "oris.ch": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "panerai.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "parmigiani.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "piaget.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "piaget.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "raymondweil.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "ressencewatches.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "rogerdubuis.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "rolex.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "rolex.org": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "tagheuer.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "tudorwatch.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "ulysse-nardin.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "zenith-watches.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "tissotshop.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "tissotwatches.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "renaudtixier.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "casio.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "both"},
+    "casio.co.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "g-shock.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "gshock.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "baby-g.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "edifice-watches.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "protrek.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "oceanus.casio.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "citizen.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "citizen.co.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "campanola.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "the-citizen.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "seikowatches.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "both"},
+    "seikowatcheshop.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "garmin.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "garmin.co.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "lainewatches.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "ossoitaly.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "shellman.co.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "klasse14.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "mauronmusy.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "en"},
+    "zerootime.com": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
+    "ztage.jp": {"category": "A", "allowed_use": ["facts", "context"], "lang": "ja"},
 
     # B: 正規店/販売店
-    "eye-eye-isuzu.co.jp": {"category": "B", "allowed_use": ["context"]},
-    "rasin.co.jp": {"category": "B", "allowed_use": ["context"]},
-    "evance.co.jp": {"category": "B", "allowed_use": ["context"]},
+    "eye-eye-isuzu.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "rasin.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "evance.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "tgsakai.blogo.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "shopblog.tomiya.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "e-ami.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "nsdo.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "basisspecies.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "l-sakae.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "isana-w.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "hidakahonten.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "hrd-web.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "kamine.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "kobayashi-tokeiten.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "tompkins.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "anshindo-grp.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "isseidostaff.blogspot.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "lian-sakai-onlineshop.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "prive.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "koyanagi-tokei.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "hassin.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "wing-rev.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "hf-age.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "threec.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "j-paris.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "koharu1977.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "jw-oomiya.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "ishida-watch.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "tokia.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "hh-new.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "yoshidaweb.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "couronne.info": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "jackroad.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "bettyroad.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "housekihiroba.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "komehyo.co.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "ginza-rasin.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "gmt-j.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "moonphase.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "kawano-watch.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "galleryrare.jp": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
+    "watchnian.com": {"category": "B", "allowed_use": ["context"], "lang": "ja"},
 
     # C: 時計専門メディア
-    "webchronos.net": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "hodinkee.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "monochrome-watches.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "timeandtidewatches.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "fratellowatches.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "watchesbysjx.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "revolutionwatch.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "swisswatches-magazine.com": {"category": "C", "allowed_use": ["context", "opinion"]},
-    "wornandwound.com": {"category": "C", "allowed_use": ["context", "opinion"]},
+    "webchronos.net": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "hodinkee.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "hodinkee.jp": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "monochrome-watches.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "timeandtidewatches.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "fratellowatches.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "watchesbysjx.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "revolutionwatch.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "swisswatches-magazine.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "wornandwound.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "ablogtowatch.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "watchtime.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "waqt.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "watchmedia.co.jp": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "watch-media-online.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "pen-online.jp": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "tokeibegin.jp": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "watchfan.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "precious.jp": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "watch-tanaka.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "gressive.jp": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "watchlife.jp": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "tokeizanmai.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "esq-mag.jp": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "thewatchbox.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "deployant.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "quillandpad.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "sjx.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "thewatchpages.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "timezone.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "twobrokewatchsnobs.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "watchlounge.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "chrono24.jp": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "ja"},
+    "chrono24.com": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
+    "watchanalytics.io": {"category": "C", "allowed_use": ["context", "opinion"], "lang": "en"},
 
-    # D: マーケット系（用途限定）
-    "chrono24.com": {"category": "D", "allowed_use": ["market", "context"]},
+    # D: マーケット系（現在は空）
+    # (empty)
 
     # E: UGC（補助）
-    "wikipedia.org": {"category": "E", "allowed_use": ["context"]},
-    "note.com": {"category": "E", "allowed_use": ["context"]},
+    "wikipedia.org": {"category": "E", "allowed_use": ["context"], "lang": "both"},
+    "note.com": {"category": "E", "allowed_use": ["context"], "lang": "ja"},
+
 }
 
 
@@ -265,7 +504,9 @@ def get_source_policy(url: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
 
     for domain, policy in TRUST_SOURCES.items():
         if host == domain or host.endswith("." + domain):
-            return True, host, policy
+            normalized_policy = dict(policy)
+            normalized_policy.setdefault("lang", "both")
+            return True, host, normalized_policy
 
     return False, host, None
 
@@ -503,6 +744,10 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
     style = payload.get("style", {}) or {}
     options = payload.get("options", {}) or {}
     constraints = payload.get("constraints", {}) or {}
+    ref_hit_false_urls = payload.get("_ref_hit_false_urls") or []
+    if not isinstance(ref_hit_false_urls, list):
+        ref_hit_false_urls = []
+    ref_hit_false_urls = [u.strip() for u in ref_hit_false_urls if isinstance(u, str) and u.strip()]
 
     reference_url = (payload.get("reference_url") or payload.get("research", {}).get("reference_url") or "").strip()
     staff_additional_input = (payload.get("staff_additional_input") or payload.get("editor_note") or "").strip()
@@ -549,7 +794,17 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 [参考資料]
 採用表示用URL（代表）: {reference_url if reference_url else "(未指定)"}
 {policy_line}
-本文: (なし)
+        本文: (なし)
+"""
+
+    ref_hit_false_block = ""
+    if ref_hit_false_urls:
+        joined = "\n".join([f"- {u}" for u in ref_hit_false_urls])
+        ref_hit_false_block = f"""
+[ref_hit=false 参考記事に関する制約]
+以下の参考記事には対象商品の型番が含まれていません。
+{joined}
+この参考記事には対象商品の型番が含まれていません。デザインの印象、着用感、素材の質感、使い勝手などの定性的な情報のみを参考にしてください。サイズ、ムーブメント、価格などのスペック情報は一切参考にせず、確定スペックのみを使用してください。
 """
 
     return f"""以下の商品について、intro_text と specs_text を作成してください。
@@ -575,6 +830,7 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 {specs_template}
 
 {ref_block}
+{ref_hit_false_block}
 
 [重要ルール]
 - intro_text にはスタッフ追加入力の内容を自然に統合する（未入力の場合は触れない）
@@ -853,6 +1109,13 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
         total += len(block)
 
     combined_reference_text = "\n\n---\n\n".join(combined_blocks).strip()
+
+    ref_hit_false_urls = [
+        item.get("url", "")
+        for item in per_url_debug
+        if bool(item.get("ok")) and (not bool(item.get("ref_hit"))) and bool(item.get("url"))
+    ]
+    payload["_ref_hit_false_urls"] = [u for u in ref_hit_false_urls if isinstance(u, str) and u.strip()]
 
     # build_user_prompt が表示に使う代表URL
     payload["reference_url"] = chosen_url
