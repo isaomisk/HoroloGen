@@ -34,7 +34,11 @@ from models import (
     LoginToken,
 )
 import llm_client as llmc
-from url_discovery import discover_reference_urls
+from url_discovery import (
+    discover_reference_urls,
+    fallback_search_from_failed_url,
+    discover_english_urls,
+)
 from errors import make_error_id, to_user_message, log_exception
 
 # ----------------------------
@@ -1872,12 +1876,6 @@ def staff_search():
             ]
             raw_urls = [u for u in raw_urls if u]
 
-            if not raw_urls:
-                auto_urls, _auto_debug = discover_reference_urls(brand, reference, max_urls=3)
-                reference_urls = auto_urls[:3]
-            else:
-                reference_urls = raw_urls[:3]
-
             conn = get_db_connection()
             try:
                 master = conn.execute('''
@@ -1919,6 +1917,99 @@ def staff_search():
                     ov = override[f] if override and override[f] else ''
                     ms = master[f] if master and master[f] else ''
                     canonical[f] = ov if ov else ms
+
+                # Phase 3: 生成前にURLを確定（manual/fallback_ja/auto_ja/auto_en）
+                reference_url_entries = []
+                reference_prefetch = []
+                seen_reference_urls = set()
+
+                def _append_reference_entry(url: str, lang: str, source: str, max_total: int) -> None:
+                    u = (url or '').strip()
+                    if not u:
+                        return
+                    if u in seen_reference_urls:
+                        return
+                    if len(reference_url_entries) >= max_total:
+                        return
+                    reference_url_entries.append({
+                        "url": u,
+                        "lang": lang,
+                        "source": source,
+                    })
+                    seen_reference_urls.add(u)
+
+                if raw_urls:
+                    logging.info(
+                        "[HoroloGen] URL入力あり: manual/fallbackフロー開始 brand=%s reference=%s raw_url_count=%s",
+                        brand,
+                        reference,
+                        len(raw_urls),
+                    )
+                    failed_manual_urls = []
+                    for u in raw_urls[:3]:
+                        fetched_text, ok, fetched_meta = llmc.fetch_page_text(u)
+                        reference_prefetch.append({
+                            "url": u,
+                            "text": fetched_text or "",
+                            "ok": bool(ok),
+                            "fetch_ok": bool((fetched_meta or {}).get("fetch_ok", False)),
+                            "meta": fetched_meta if isinstance(fetched_meta, dict) else {},
+                            "lang": "ja",
+                            "source": "manual",
+                        })
+                        if ok:
+                            _append_reference_entry(u, "ja", "manual", max_total=3)
+                        else:
+                            failed_manual_urls.append(u)
+
+                    for failed_url in failed_manual_urls:
+                        if len(reference_url_entries) >= 3:
+                            break
+                        fallback_urls = fallback_search_from_failed_url(failed_url, max_urls=1)
+                        for alt in fallback_urls:
+                            before = len(reference_url_entries)
+                            _append_reference_entry(alt, "ja", "fallback_ja", max_total=3)
+                            if len(reference_url_entries) > before:
+                                break
+                else:
+                    logging.info(
+                        "[HoroloGen] URL空欄分岐に到達: discover_reference_urls 呼出し開始 brand=%s reference=%s",
+                        brand,
+                        reference,
+                    )
+                    auto_urls, _auto_debug = discover_reference_urls(brand, reference, max_urls=2)
+                    logging.info(
+                        "[HoroloGen] discover_reference_urls 結果: %s件 brand=%s reference=%s",
+                        len(auto_urls),
+                        brand,
+                        reference,
+                    )
+                    for u in auto_urls[:2]:
+                        _append_reference_entry(u, "ja", "auto_ja", max_total=3)
+
+                collection = (canonical.get("collection") or "").strip() or None
+                logging.info(
+                    "[HoroloGen] discover_english_urls 呼出し開始 brand=%s reference=%s collection=%s",
+                    brand,
+                    reference,
+                    collection or "",
+                )
+                english_urls = discover_english_urls(
+                    brand=brand,
+                    reference=reference,
+                    collection=collection,
+                    max_urls=1,
+                )
+                logging.info(
+                    "[HoroloGen] discover_english_urls 結果: %s件 brand=%s reference=%s",
+                    len(english_urls),
+                    brand,
+                    reference,
+                )
+                for u in english_urls[:1]:
+                    _append_reference_entry(u, "en", "auto_en", max_total=4)
+
+                reference_urls = [item.get("url", "") for item in reference_url_entries if item.get("url")]
             except Exception as e:
                 _flash_error_from_exception(
                     e,
@@ -1953,7 +2044,8 @@ def staff_search():
                 },
                 'constraints': {'target_intro_chars': 1500, 'max_specs_chars': 1000},
                 'staff_additional_input': saved_staff_additional_input,
-                'reference_urls': reference_urls,
+                'reference_urls': reference_url_entries,
+                'reference_prefetch': reference_prefetch,
                 'reference_url': reference_urls[0] if reference_urls else "",
             }
 

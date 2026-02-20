@@ -556,6 +556,8 @@ def fetch_page_text(url: str, max_chars: int = 8000, min_chars: int = 600) -> Tu
         "extracted_chars": 0,
         "extracted_preview": "",
         "filtered_reason": "",
+        "cleaned": False,
+        "cut_trigger": "",
     }
 
     url = (url or "").strip()
@@ -619,6 +621,66 @@ def fetch_page_text(url: str, max_chars: int = 8000, min_chars: int = 600) -> Tu
                 best_text = txt
                 best_len = len(txt)
         return best_text
+
+    def _clean_reference_text(raw_text: str) -> Tuple[str, bool, str]:
+        if not raw_text:
+            return "", False, ""
+
+        jp_triggers = [
+            "関連記事", "関連", "おすすめ", "人気記事", "話題の記事", "最新記事", "次の記事",
+            "プライバシーポリシー", "利用規約",
+        ]
+        en_triggers = [
+            "editors'", "recommended", "more from", "business news",
+            "introducing", "talking watches", "cookie", "©",
+        ]
+
+        cleaned = False
+        cut_trigger = ""
+        lines = [ln.strip() for ln in (raw_text or "").splitlines() if ln.strip()]
+        kept: List[str] = []
+        for ln in lines:
+            low = ln.lower()
+            is_noise = False
+            if len(ln) <= 80:
+                if any(k in ln for k in jp_triggers):
+                    is_noise = True
+                if any(k in low for k in en_triggers):
+                    is_noise = True
+                if ("http://" in low or "https://" in low) and len(ln) <= 140:
+                    is_noise = True
+                if (ln.count("|") + ln.count("｜") + ln.count("/") + ln.count("・")) >= 4:
+                    is_noise = True
+            if is_noise:
+                cleaned = True
+                continue
+            kept.append(ln)
+
+        text2 = "\n".join(kept).strip()
+        if not text2:
+            text2 = (raw_text or "").strip()
+
+        # セクション見出しが出たらそこで打ち切り
+        lower = text2.lower()
+        min_pos = None
+        for trig in jp_triggers:
+            pos = text2.find(trig)
+            if pos >= 0 and (min_pos is None or pos < min_pos):
+                min_pos = pos
+                cut_trigger = trig
+        for trig in en_triggers:
+            pos = lower.find(trig)
+            if pos >= 0 and (min_pos is None or pos < min_pos):
+                min_pos = pos
+                cut_trigger = trig
+
+        if min_pos is not None and min_pos > 0:
+            cut = text2[:min_pos].strip()
+            if cut and cut != text2:
+                text2 = cut
+                cleaned = True
+
+        return text2, cleaned, cut_trigger
 
     normalized_host = (meta.get("parsed_host") or "").lower()
     is_hodinkee_jp = normalized_host == "hodinkee.jp"
@@ -704,6 +766,13 @@ def fetch_page_text(url: str, max_chars: int = 8000, min_chars: int = 600) -> Tu
     if not text:
         meta["filtered_reason"] = "no_text_extracted"
         return "", False, meta
+
+    if bool(meta.get("allowed")):
+        cleaned_text, cleaned_flag, cut_trigger = _clean_reference_text(text)
+        if cleaned_text:
+            text = cleaned_text
+        meta["cleaned"] = bool(cleaned_flag)
+        meta["cut_trigger"] = cut_trigger
 
     if len(text) > max_chars:
         text = text[:max_chars]
@@ -1174,6 +1243,8 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
             "source": "manual",
             "ok": False,
             "prefetch_used": False,
+            "cleaned": False,
+            "cut_trigger": "",
             "preview": "",
             "filtered_reason": "no_reference_urls_in_payload",
             "ref_hit": False,
@@ -1202,6 +1273,8 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
                 "extracted_chars": raw_meta.get("extracted_chars", 0),
                 "extracted_preview": raw_meta.get("extracted_preview", ""),
                 "filtered_reason": raw_meta.get("filtered_reason", ""),
+                "cleaned": bool(raw_meta.get("cleaned", False)),
+                "cut_trigger": raw_meta.get("cut_trigger", ""),
             }
             prefetch_used = True
         else:
@@ -1232,6 +1305,8 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
             "char_count": int(len(text or "")),
             "ok": bool(ok),
             "prefetch_used": bool(prefetch_used),
+            "cleaned": bool(meta.get("cleaned", False)),
+            "cut_trigger": meta.get("cut_trigger", ""),
             "preview": meta.get("extracted_preview", ""),
             "filtered_reason": meta.get("filtered_reason", ""),
             "ref_hit": bool(hit),
