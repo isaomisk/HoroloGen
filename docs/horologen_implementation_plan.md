@@ -34,7 +34,7 @@
 2. 取得できない場合はURLパスからキーワード抽出
    例: /blog/cartier/tankamerican_mini
      → "カルティエ タンクアメリカン ミニ"
-3. 抽出キーワードで Google CSE 検索
+3. 抽出キーワードで Anthropic web_search tool で検索
 4. ホワイトリスト通過 + 本文取得可能なURLを返す
 
 入力: failed_url (str), max_urls=1 (int)
@@ -67,7 +67,7 @@
 内容: 新関数 discover_english_urls() を追加
 
 処理:
-1. クエリを順に実行:
+1. Anthropic web_search tool でクエリを順に実行:
    - "{brand} {reference} review"
    - "{brand} {reference} hands-on"
    - "{brand} {collection} review"（collectionがある場合）
