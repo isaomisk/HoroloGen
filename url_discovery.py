@@ -25,6 +25,11 @@ CRAWL_BLOCKED_DOMAINS = {
     "hodinkee.jp",
 }
 
+# 自動探索で除外するドメイン（TRUST_SOURCESは維持。手動入力fetchには適用しない）
+AUTO_DISCOVERY_EXCLUDE_DOMAINS = {
+    "omegawatches.com",
+}
+
 
 def _normalize_domain(d: str) -> str:
     host = (d or "").strip().lower()
@@ -70,6 +75,34 @@ def _extract_blocked_domains_from_error_message(msg: str) -> List[str]:
         seen.add(nd)
         out.append(nd)
     return out
+
+
+def _passes_auto_discovery_filter(url: str) -> Tuple[bool, str]:
+    """
+    自動探索で採用するURLの共通フィルタ。
+    - 除外ドメイン
+    - chrono24 は /magazine/ 配下のみ許可
+    """
+    u = (url or "").strip()
+    if not u:
+        return False, "auto_invalid_url"
+    try:
+        p = urlparse(u)
+        host = _normalize_domain(p.netloc or p.hostname or "")
+        path = (p.path or "").strip().lower()
+    except Exception:
+        return False, "auto_invalid_url"
+
+    for d in AUTO_DISCOVERY_EXCLUDE_DOMAINS:
+        nd = _normalize_domain(d)
+        if host == nd or host.endswith("." + nd):
+            return False, "auto_excluded_domain"
+
+    if host in {"chrono24.com", "chrono24.jp"}:
+        if not (path == "/magazine" or path.startswith("/magazine/")):
+            return False, "auto_disallowed_path"
+
+    return True, ""
 
 
 def _collect_allowed_domains_by_lang(source_map: Dict[str, Dict[str, Any]], allowed_langs: List[str]) -> List[str]:
@@ -289,6 +322,14 @@ def fallback_search_from_failed_url(failed_url: str, max_urls: int = 1) -> List[
         allowed, _host, _policy = llmc.get_source_policy(cand)
         if not allowed:
             continue
+        pass_auto, reason = _passes_auto_discovery_filter(cand)
+        if not pass_auto:
+            logging.info(
+                "[HoroloGen] auto_discovery URL除外: url=%s filtered_reason=%s",
+                cand,
+                reason,
+            )
+            continue
         out.append(cand)
         if len(out) >= max(1, max_urls):
             break
@@ -339,6 +380,14 @@ def discover_english_urls(
             seen.add(cand)
             allowed, _host, policy = llmc.get_source_policy(cand)
             if not allowed:
+                continue
+            pass_auto, reason = _passes_auto_discovery_filter(cand)
+            if not pass_auto:
+                logging.info(
+                    "[HoroloGen] auto_discovery URL除外: url=%s filtered_reason=%s",
+                    cand,
+                    reason,
+                )
                 continue
             if (policy or {}).get("lang") != "en":
                 continue
@@ -406,6 +455,14 @@ def discover_reference_urls(brand: str, reference: str, max_urls: int = 3) -> Tu
 
             allowed, _host, _policy = llmc.get_source_policy(u)
             if not allowed:
+                continue
+            pass_auto, reason = _passes_auto_discovery_filter(u)
+            if not pass_auto:
+                logging.info(
+                    "[HoroloGen] auto_discovery URL除外: url=%s filtered_reason=%s",
+                    u,
+                    reason,
+                )
                 continue
 
             candidates.append(u)
