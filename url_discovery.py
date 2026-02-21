@@ -30,6 +30,35 @@ AUTO_DISCOVERY_EXCLUDE_DOMAINS = {
     "omegawatches.com",
 }
 
+# カテゴリB（正規店/販売店）で自動探索時に許可するブログ系パス
+STORE_BLOG_PATHS = {
+    "tgsakai.blogo.jp": ["/"],  # ドメイン全体がブログ
+    "shopblog.tomiya.co.jp": ["/brand/"],
+    "e-ami.co.jp": ["/blog-index"],
+    "nsdo.co.jp": ["/magazine/"],
+    "basisspecies.jp": ["/blog/"],
+    "l-sakae.co.jp": ["/blog/"],
+    "isana-w.jp": ["/blogs/"],
+    "hidakahonten.jp": ["/blog/"],
+    "hrd-web.com": ["/apps/note/"],
+    "kamine.co.jp": ["/blog/"],
+    "kobayashi-tokeiten.com": ["/sblog/"],
+    "tompkins.jp": ["/blog/"],
+    "anshindo-grp.co.jp": ["/blog/"],
+    "isseidostaff.blogspot.com": ["/"],  # ドメイン全体がブログ
+    "lian-sakai-onlineshop.jp": ["/blog"],
+    "prive.co.jp": ["/prive_blog/"],
+    "eye-eye-isuzu.co.jp": ["/blogs/"],
+    "koyanagi-tokei.com": ["/wordpress/"],
+    "hassin.co.jp": ["/blog/"],
+    "wing-rev.co.jp": ["/blogs/"],
+    "hf-age.com": ["/blog/"],
+    "threec.jp": ["/threec/news/blog/"],
+    "j-paris.co.jp": ["/column"],
+    "koharu1977.com": ["/blog/"],
+    "rasin.co.jp": ["/blog/"],
+}
+
 
 def _normalize_domain(d: str) -> str:
     host = (d or "").strip().lower()
@@ -100,6 +129,19 @@ def _passes_auto_discovery_filter(url: str) -> Tuple[bool, str]:
 
     if host in {"chrono24.com", "chrono24.jp"}:
         if not (path == "/magazine" or path.startswith("/magazine/")):
+            return False, "auto_disallowed_path"
+
+    # カテゴリBの一部ドメインはブログ/コラム配下のみ許可
+    matched_prefixes = None
+    for d, prefixes in STORE_BLOG_PATHS.items():
+        nd = _normalize_domain(d)
+        if host == nd or host.endswith("." + nd):
+            matched_prefixes = [str(p or "").strip().lower() for p in prefixes if str(p or "").strip()]
+            break
+    if matched_prefixes is not None:
+        if not matched_prefixes:
+            return False, "auto_disallowed_path"
+        if not any(path.startswith(prefix) for prefix in matched_prefixes):
             return False, "auto_disallowed_path"
 
     return True, ""
