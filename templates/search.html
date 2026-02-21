@@ -258,21 +258,20 @@
 
 <section class="v0-card">
   <h2><span class="v0-title-icon"><i data-lucide="book-open"></i></span>スタッフ追加入力</h2>
-  <div class="form-group" style="margin-top: 10px;">
-    <label for="staff_additional_input">スタッフ追加入力（必ず文章に反映されます）</label>
+  <div class="form-group" style="margin-top: 0;">
     <textarea
       id="staff_additional_input"
       rows="4"
-      placeholder="接客での実体験・商品の魅力・エピソードなどを自由に記載してください。">{{ staff_additional_input or '' }}</textarea>
+      placeholder="商品の印象や魅力・接客での実体験やエピソードなど自由に記載してください">{{ staff_additional_input or '' }}</textarea>
     <small style="color:#666;">
-      ※生成時に内容を保存し、商品紹介文へ自然に反映します。
+      ※内容を保存し作成文へ自然に反映します
     </small>
     <input type="hidden" id="saved_staff_additional_input" value="{{ staff_additional_input or '' }}">
   </div>
 </section>
 
 <section class="v0-card v0-card-article">
-  <h2><span class="v0-title-icon"><i data-lucide="sparkles"></i></span>記事生成（ダミー）</h2>
+  <h2><span class="v0-title-icon"><i data-lucide="sparkles"></i></span>記事作成</h2>
   <div class="v0-article-meta">
     <div class="v0-article-meta-left">プラン: {{ plan_mode }} / 対象月: {{ month_key }}</div>
     {% if plan_mode == 'unlimited' %}
@@ -348,12 +347,12 @@
       >
 
       <small class="v0-url-help">
-        公式 / 正規代理店 / 許可メディアなど、信頼できるページを最大3本まで貼れます（ホワイトリスト外は取得されません）
+        信頼できるURLを最大3本まで貼れます
       </small>
     </div>
 
     {% set quota_ok = (plan_mode == 'unlimited') or (monthly_remaining|default(0) > 0) %}
-    <button type="submit" class="v0-generate-btn" {% if not quota_ok %}disabled{% endif %}>記事生成（ダミー）</button>
+    <button type="submit" class="v0-generate-btn" {% if not quota_ok %}disabled{% endif %}>記事作成</button>
     {% if not quota_ok %}
       <div class="v0-quota-error">※今月の生成上限に達しています</div>
     {% endif %}
@@ -497,7 +496,7 @@
 
 {% if recent_generations %}
   <section class="v0-card v0-card-recent">
-    <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon"><i data-lucide="clock-3"></i></span>直近の生成10件</h2>
+    <h2 style="margin:0 0 8px 0;"><span class="v0-title-icon"><i data-lucide="clock-3"></i></span>直近の作成10件</h2>
     <div class="v0-recent-list">
     {% for g in recent_generations %}
       <div class="v0-recent-row">
@@ -533,8 +532,8 @@
         <tr>
           <th>ブランド名</th>
           <th>商品登録数</th>
-          <th>今月の生成件数</th>
-          <th>直近の生成リファレンス</th>
+          <th>今月の作成数</th>
+          <th>直近の作成リファレンス</th>
         </tr>
       </thead>
       <tbody>
