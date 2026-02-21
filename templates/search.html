@@ -25,7 +25,7 @@
       </div>
     </div>
   </div>
-  <p>ブランドとリファレンスを指定して、仕様確認・記事生成・オーバーライド編集を行えます。</p>
+  <p>ブランドとリファレンスを指定して、仕様確認・記事の作成を行えます。</p>
 </div>
 
 {% if is_admin %}
@@ -96,23 +96,10 @@
   </div>
 {% endif %}
 
-{% if override %}
-<div class="v0-inline-actions">
-  <form method="POST" style="display: inline;">
-    <input type="hidden" name="action" value="delete_override">
-    <input type="hidden" name="brand" value="{{ brand }}">
-    <input type="hidden" name="reference" value="{{ reference }}">
-    <button type="submit" class="btn btn-danger" onclick="return confirm('オーバーライドを解除してマスタに戻しますか？')">
-      オーバーライド解除（マスタに戻す）
-    </button>
-  </form>
-</div>
-{% endif %}
-
 {% if canonical %}
 <section class="v0-card v0-card-canonical">
   <details class="canonical-specs-collapsible">
-    <summary><span class="v0-title-icon"><i data-lucide="book-open"></i></span>▶ 正規仕様（Canonical Specs）<span class="v0-canonical-count">{{ canonical|length }}項目</span><span class="v0-collapsible-hint"></span></summary>
+    <summary><span class="v0-title-icon"><i data-lucide="settings"></i></span>商品スペック<span class="v0-canonical-count">{{ canonical|length }}項目</span><span class="v0-collapsible-hint"></span></summary>
     <div class="specs-grid">
       {% for field, value in canonical.items() %}
       <div class="spec-card {% if field in overridden_fields %}override-field{% endif %}">
@@ -126,19 +113,13 @@
       </div>
       {% endfor %}
     </div>
-  </details>
-</section>
-
-  <section class="v0-card v0-card-override">
-  <h2><span class="v0-title-icon"><i data-lucide="settings"></i></span>オーバーライド編集</h2>
-  <form method="POST">
-    <input type="hidden" name="action" value="save_override">
-    <input type="hidden" name="brand" value="{{ brand }}">
-    <input type="hidden" name="reference" value="{{ reference }}">
-
-    <details class="form-group v0-override-details">
-      <summary>オーバーライド詳細項目<span class="v0-collapsible-hint"></span></summary>
-      <div class="specs-grid v0-override-grid">
+    <form method="POST" id="save_override_form">
+      <input type="hidden" name="action" value="save_override">
+      <input type="hidden" name="brand" value="{{ brand }}">
+      <input type="hidden" name="reference" value="{{ reference }}">
+      <details class="form-group v0-override-details">
+        <summary>オーバーライド詳細項目<span class="v0-collapsible-hint"></span></summary>
+        <div class="specs-grid v0-override-grid">
       <div class="form-group">
         <label for="price_jpy">価格 (JPY)</label>
         <input type="text" id="price_jpy" name="price_jpy" value="{{ override.price_jpy if override else '' }}" placeholder="{{ master.price_jpy if master else '' }}">
@@ -235,15 +216,23 @@
         <small style="color: #666;">マスタ値: {{ master.remarks }}</small>
         {% endif %}
       </div>
-      </div>
-    </details>
-
-    <button type="submit" class="v0-override-save-btn" style="margin-top: 20px;">オーバーライドを保存</button>
-  </form>
+        </div>
+      </details>
+    </form>
+    <form method="POST" id="delete_override_form">
+      <input type="hidden" name="action" value="delete_override">
+      <input type="hidden" name="brand" value="{{ brand }}">
+      <input type="hidden" name="reference" value="{{ reference }}">
+    </form>
+    <div class="v0-spec-actions">
+      <button type="submit" form="delete_override_form" class="btn btn-danger v0-override-delete-btn js-double-confirm-delete">スペック修正を解除</button>
+      <button type="submit" form="save_override_form" class="v0-override-save-btn">オーバーライドを保存</button>
+    </div>
+  </details>
 </section>
 
 <section class="v0-card">
-  <h2>スタッフ追加入力</h2>
+  <h2><span class="v0-title-icon"><i data-lucide="book-open"></i></span>スタッフ追加入力</h2>
   <div class="form-group" style="margin-top: 10px;">
     <label for="staff_additional_input">スタッフ追加入力（必ず文章に反映されます）</label>
     <textarea
@@ -586,6 +575,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (!brandSelect || !referenceInput || !referenceSuggestions || !refCount || !refLoading) {
     return;
+  }
+
+  const deleteOverrideButton = document.querySelector('.js-double-confirm-delete');
+  if (deleteOverrideButton) {
+    deleteOverrideButton.addEventListener('click', (event) => {
+      const firstConfirmed = window.confirm('スペック修正を解除しても良いですか？');
+      if (!firstConfirmed) {
+        event.preventDefault();
+        return;
+      }
+      const secondConfirmed = window.confirm('確認：スペック修正を解除しても良いですか？');
+      if (!secondConfirmed) {
+        event.preventDefault();
+      }
+    });
   }
 
   const refCache = new Map();
