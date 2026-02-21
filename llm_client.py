@@ -125,12 +125,21 @@ SYSTEM_BASE = """あなたは正規時計店で使用される、商品説明文
 - 想像・補完・事実に見える推測は禁止
 
 ────────────────────
-【reference_url の使い方】
+【reference_url の使い方（重要：表現の利用は禁止）】
 ────────────────────
-- 背景説明・文脈補足の材料としてのみ使用する
-- 数値・仕様は canonical_specs のみを使用する
-- 本文が薄い場合は、実用性・装着感を中心に構成する
-- reference_url本文の文章表現をコピーしない（同義の言い換えにする）
+- reference_url本文は「観点の抜け漏れ確認」と「背景の事実関係の把握」にのみ使用する。
+- 禁止：reference_url本文の翻訳／要約／言い換え／焼き直し（同じ意味の言い換えも含む）
+- 禁止：reference_url本文の段落順・論点順・見出し構成・言い回しの踏襲
+- intro_text は必ず staff_additional_input（販売現場の実体験・所感・接客観察）を中心に組み立てる。
+- 数値・仕様は canonical_specs のみを使用する（reference_url本文の数値は採用しない）。
+- staff_additional_input が薄い場合は、用途提案・客層・着用シーン・注意点を増やして本文を成立させる（reference_url本文の言い換えで埋めない）。
+
+────────────────────
+【intro_text の必須条件（厳守）】
+────────────────────
+- 店舗スタッフの一人称（私／当店／店頭で…）を含む文を最低6文入れる
+- おすすめの客層・用途・着用シーン・注意点を含む文を最低2文入れる
+- レビュー定型の総括語彙は禁止（例：象徴的／受け継がれ／技術の結晶／劇的／刷新／〜と言えます 等）
 
 ────────────────────
 【specs_text のルール】
@@ -277,7 +286,7 @@ def build_system(tone: str, has_reference_text: bool) -> str:
     profile = TONE_PROFILES.get(tone) or TONE_PROFILES.get("practical") or TONE_PROFILES["practical"]
     if has_reference_text:
         lo, hi = profile["chars_with_url"]
-        depth_note = "reference_url本文があるため、背景・文脈を厚めに扱ってよい。"
+        depth_note = "reference_url本文があるが、翻訳/要約/言い換え/構成踏襲は禁止。背景はcanonical_specsとstaff_additional_input（接客観察・主観）で厚めに書く。reference_url本文は観点確認のみに使う。"
     else:
         lo, hi = profile["chars_no_url"]
         depth_note = "reference_url本文が薄い/ないため、深掘りを抑制し、安全な範囲でまとめる。"
@@ -939,7 +948,8 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 
     if reference_text.strip():
         ref_block = f"""
-[参考資料（スタッフが指定したURL群の本文抜粋）]
+[外部記事メモ（観点抽出専用・本文表現の使用禁止）]
+以下の参考本文は観点確認専用。翻訳・要約・言い換え・構成踏襲は禁止。本文中に参照表現を再利用しない。
 採用表示用URL（代表）: {reference_url if reference_url else "(未指定)"}
 {policy_line}
 本文抜粋（複数URLの結合）:
@@ -947,7 +957,8 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 """
     else:
         ref_block = f"""
-[参考資料]
+[外部記事メモ（観点抽出専用・本文表現の使用禁止）]
+以下の参考本文は観点確認専用。翻訳・要約・言い換え・構成踏襲は禁止。本文中に参照表現を再利用しない。
 採用表示用URL（代表）: {reference_url if reference_url else "(未指定)"}
 {policy_line}
         本文: (なし)
@@ -994,9 +1005,11 @@ def build_user_prompt(payload: dict, reference_text: str) -> str:
 - スタッフ追加入力は必要に応じて言い換えてよいが、意味は保持する
 - 事実の捏造はしない
 - 語り手は「正規時計店スタッフ」。一人称の使い方はトーン規定に従う
-- 事実の優先順位：canonical_specs > remarks > reference_url本文
+- 事実優先順位を厳守する：数値・仕様はcanonical_specsのみ、所感・提案はstaff_additional_input最優先、reference_url本文は観点確認のみ（表現利用禁止）
+- 事実の優先順位：canonical_specs > remarks > reference_url本文（reference_url本文は観点確認専用）
 - 矛盾がある場合は必ず上位を採用する
-- reference_url本文の文章表現をコピーしない（同義の言い換えにする）
+- reference_url本文の翻訳／要約／言い換え／焼き直し（同じ意味の言い換え含む）を禁止
+- reference_url本文の段落順・論点順・見出し構成・言い回しの踏襲を禁止
 - specs_text は必ず出力する（空にしない）
 - specs_text は上のテンプレをそのまま使う（順序・形式を変えない）
 {target_note}
@@ -1489,13 +1502,13 @@ def generate_article(payload: dict, rewrite_mode: str = "none") -> tuple[str, st
     lvl_after = lvl_before
 
     if do_rewrite:
-        rewrite_system = system + "\n\n【言い換え再生成（重要）】\n- reference_url本文の表現の“言い回し”は流用しない\n- 構成と文のつながりを組み替え、同義の言い換えを徹底する\n- 固有名詞・型番・数値は保持する\n"
+        rewrite_system = system + "\n\n【再構成再生成（重要）】\n- reference_url本文の表現の“言い回し”は流用しない\n- 翻訳/要約/言い換えではなく、スタッフ接客文脈として全面的に再構成する\n- 固有名詞・型番・数値は保持する\n"
 
         rewrite_user = user_prompt + f"""
 
-[追加指示：言い換え再生成]
-- 直前に作った intro_text のドラフトを渡すので、意味を保持しつつ大きく言い換えてください。
-- reference_url本文との表現重複を避けるため、言い回し・語順・段落構成を組み替えてください。
+[追加指示：再構成再生成]
+- 直前に作った intro_text のドラフトを渡すので、スタッフ接客文脈として全面的に再構成してください。
+- reference_url本文との表現重複を避けるため、翻訳/要約/言い換えではなく、主観・用途提案・店頭観察を中心に書き直してください。
 - specs_text はテンプレの形式を維持してください（内容はcanonical_specs準拠）。
 
 [直前のintro_textドラフト]
