@@ -266,6 +266,9 @@
     <small style="color:#666;">
       ※内容を保存し作成文へ自然に反映します
     </small>
+    <div id="staff_additional_input_required_note" style="display:none; color:#b42318; font-size:12px; margin-top:6px;">
+      スタッフ追加入力は必須です
+    </div>
     <input type="hidden" id="saved_staff_additional_input" value="{{ staff_additional_input or '' }}">
   </div>
 </section>
@@ -352,7 +355,7 @@
     </div>
 
     {% set quota_ok = (plan_mode == 'unlimited') or (monthly_remaining|default(0) > 0) %}
-    <button type="submit" class="v0-generate-btn" {% if not quota_ok %}disabled{% endif %}>記事作成</button>
+    <button type="submit" class="v0-generate-btn" data-quota-ok="{{ '1' if quota_ok else '0' }}" {% if not quota_ok %}disabled{% endif %}>記事作成</button>
     {% if not quota_ok %}
       <div class="v0-quota-error">※今月の生成上限に達しています</div>
     {% endif %}
@@ -594,8 +597,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const refCount = document.getElementById('ref_count');
   const refLoading = document.getElementById('ref_loading');
   const generateForm = document.querySelector('form.v0-article-form');
+  const generateButton = generateForm ? generateForm.querySelector('.v0-generate-btn') : null;
   const staffAdditionalInput = document.getElementById('staff_additional_input');
   const savedStaffAdditionalInput = document.getElementById('saved_staff_additional_input');
+  const staffRequiredNote = document.getElementById('staff_additional_input_required_note');
 
   if (!brandSelect || !referenceInput || !referenceSuggestions || !refCount || !refLoading) {
     return;
@@ -728,8 +733,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  function updateGenerateButtonState() {
+    if (!generateButton || !staffAdditionalInput) return;
+    const hasStaffInput = (staffAdditionalInput.value || '').trim() !== '';
+    const quotaOk = generateButton.dataset.quotaOk === '1';
+    generateButton.disabled = !quotaOk || !hasStaffInput;
+    if (staffRequiredNote) {
+      staffRequiredNote.style.display = hasStaffInput ? 'none' : 'block';
+    }
+  }
+
   if (generateForm && staffAdditionalInput) {
-    generateForm.addEventListener('submit', () => {
+    staffAdditionalInput.addEventListener('input', updateGenerateButtonState);
+    updateGenerateButtonState();
+
+    generateForm.addEventListener('submit', (event) => {
       let hiddenStaffInput = generateForm.querySelector('input[name="staff_additional_input"]');
       if (!hiddenStaffInput) {
         hiddenStaffInput = document.createElement('input');
@@ -741,6 +759,22 @@ document.addEventListener('DOMContentLoaded', () => {
       const current = (staffAdditionalInput.value || '').trim();
       const saved = savedStaffAdditionalInput ? (savedStaffAdditionalInput.value || '').trim() : '';
       hiddenStaffInput.value = current;
+
+      if (!current) {
+        event.preventDefault();
+        updateGenerateButtonState();
+        return;
+      }
+
+      const brandValue = (brandSelect && brandSelect.value ? brandSelect.value : '').trim();
+      const referenceValue = (referenceInput && referenceInput.value ? referenceInput.value : '').trim();
+      const confirmMessage = (brandValue && referenceValue)
+        ? `${brandValue} / ${referenceValue} で記事を作成しても良いですか？`
+        : '入力内容で記事を作成しても良いですか？';
+      if (!window.confirm(confirmMessage)) {
+        event.preventDefault();
+        return;
+      }
 
       if (current !== '' && current !== saved) {
         window.alert("スタッフの体験談を追加して文章を生成します");
